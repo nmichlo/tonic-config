@@ -8,12 +8,12 @@ import inspect
 # config                                                                    #
 # ========================================================================= #
 
+
 class Namespace:
     """
     Nested namespace classes with member values can be converted to a configuration
     where the name of the classes in the hierarchy correspond to the namespace names
     """
-
     def __init__(self):
         raise Exception('Namespace should not be instantiated')
 
@@ -28,7 +28,7 @@ class Config(object):
         self._FULL_TO_NAME = {} # full_namespace to namespace
         # namespace pattern
         # https://docs.python.org/3/reference/lexical_analysis.html
-        self._pattern = re.compile('^([a-zA-Z0-9][a-zA-Z0-9_]*)(\.[a-zA-Z0-9][a-zA-Z0-9_]*)*$')
+        self._pattern = re.compile('^([a-zA-Z0-9][a-zA-Z0-9_]*)([.][a-zA-Z0-9][a-zA-Z0-9_]*)*$')
         # if namespaces must not conflict
         self._strict = strict
 
@@ -49,9 +49,14 @@ class Config(object):
             assert module_path.startswith(working_dir)
             module_path = module_path[len(working_dir):]
             # replace slashes with dots and combine
-            return f'{module_path.replace("/", ".")}.{func.__qualname__}'
+            return f'{module_path.replace("/", ".")}.{self._get_name(func)}'
         else:
-            return func.__qualname__
+            return self._get_name(func)
+
+    def _get_name(self, func):
+        name = func.__qualname__
+        name = name.replace('.<locals>', '')  # handle nested functions
+        return name
 
     def _register_function(self, func, namespace):
         """Register a function to the config engine"""
