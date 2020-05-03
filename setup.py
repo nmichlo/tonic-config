@@ -1,16 +1,22 @@
+import subprocess
 import setuptools
 
-with open('README.md', 'r') as fh:
-    long_description = fh.read()
+# get git info
+GIT_COMMITS_SINCE_LAST_TAG = subprocess.getoutput(f'git rev-list "$(git tag --sort=version:refname --merged | tail -n1)..HEAD" --count')
 
+# read description
+with open('README.md', 'r') as fh:
+    LONG_DESCRIPTION = fh.read()
+
+# setup
 setuptools.setup(
     name='tonic-config',
     url='https://github.com/nmichlo/tonic-config',
 
-    # automatic versions
+    # automatic version
     version_config={
-        "version_format": "{tag}.dev{sha}",
-        "starting_version": "0.1.0"
+        'version_format': '{tag}.dev' + GIT_COMMITS_SINCE_LAST_TAG + '.{sha}',
+        'starting_version': '0.1.0'
     },
     setup_requires=['better-setuptools-git-version'],
 
@@ -23,14 +29,13 @@ setuptools.setup(
 
     # Project Information
     description='Lightweight configuration framework for Python, combining the most notable aspects of Gin and Sacred.',
-    long_description=long_description,
+    long_description=LONG_DESCRIPTION,
     long_description_content_type='text/markdown',
 
     # Project Dependencies
     python_requires='>=3.6',
     packages=setuptools.find_packages(),
 
-    #
     # https://pypi.org/classifiers/
     classifiers=[
         'License :: OSI Approved :: MIT License',
@@ -42,5 +47,4 @@ setuptools.setup(
         'Topic :: Scientific/Engineering :: Artificial Intelligence',
         'Topic :: Utilities'
     ],
-
 )
