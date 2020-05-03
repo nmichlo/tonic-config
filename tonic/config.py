@@ -28,30 +28,65 @@ class Configurable(object):
 
     @functools.cached_property
     def fullname(self) -> str:
-        """
-        This name is not validated and could be wrong!
-        Returns the import path to a function
-        """
-        # path to the module that the function is in without extension
-        module_path = os.path.splitext(inspect.getmodule(self.func).__file__)[0]
-        # strip the working directory from the path
-        working_dir = os.getcwd().rstrip('/') + '/'
-        assert module_path.startswith(working_dir)
-        module_path = module_path[len(working_dir):]
-        # replace slashes with dots and combine
-        fullname = f'{module_path.replace("/", ".")}.{self.shortname}'
-        return self.validate_name(fullname)
+        return Configurable.get_fullname(self.func)
 
     @functools.cached_property
     def shortname(self) -> str:
-        shortname = self.func.__qualname__
-        shortname = shortname.replace('.<locals>', '')  # handle nested functions
-        return self.validate_name(shortname)
+        return Configurable.get_shortname(self.func)
 
     @functools.cached_property
     def configurable_param_names(self) -> Set[str]:
         params = inspect.signature(self.func).parameters
         return {k for k, p in params.items() if (p.default is not p.empty)}
+
+    def make_wrapped_func(self, ns_config, global_config):
+        assert self.is_dirty, 'Cannot make function if not dirty'
+        self._is_dirty = False
+
+        # get kwargs
+        kwargs = {}
+        for k in self.configurable_param_names:
+            if k in ns_config:
+                kwargs[k] = ns_config[k]
+            elif k in global_config:
+                kwargs[k] = global_config[k]
+
+        # reinstantiate if _Instanced
+        for k, v in kwargs.items():
+            if isinstance(v, _Instanced):
+                kwargs[k] = v()
+
+        # make new function with default values
+        return functools.partial(self.func, **kwargs)
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._is_dirty
+
+    def __str__(self):
+        return self.fullname
+
+    @staticmethod
+    def get_fullname(func) -> str:
+        """
+        This name is not validated and could be wrong!
+        Returns the import path to a function
+        """
+        # path to the module that the function is in without extension
+        module_path = os.path.splitext(inspect.getmodule(func).__file__)[0]
+        # strip the working directory from the path
+        working_dir = os.getcwd().rstrip('/') + '/'
+        assert module_path.startswith(working_dir)
+        module_path = module_path[len(working_dir):]
+        # replace slashes with dots and combine
+        fullname = f'{module_path.replace("/", ".")}.{Configurable.get_shortname(func)}'
+        return Configurable.validate_name(fullname)
+
+    @staticmethod
+    def get_shortname(func) -> str:
+        shortname = func.__qualname__
+        shortname = shortname.replace('.<locals>', '')  # handle nested functions
+        return Configurable.validate_name(shortname)
 
     @staticmethod
     def can_configure(obj):
@@ -66,26 +101,6 @@ class Configurable(object):
             raise ValueError(f'Namespace contains a python identifier')
         return name
 
-    def make_wrapped_func(self, ns_config, global_config):
-        assert self.is_dirty, 'Cannot make function if not dirty'
-        self._is_dirty = False
-        # get kwargs
-        kwargs = {}
-        for k in self.configurable_param_names:
-            if k in ns_config:
-                kwargs[k] = ns_config[k]
-            elif k in global_config:
-                kwargs[k] = global_config[k]
-        # make new function with default values
-        return functools.partial(self.func, **kwargs)
-
-    @property
-    def is_dirty(self) -> bool:
-        return self._is_dirty
-
-    def __str__(self):
-        return self.fullname
-
 
 # ========================================================================= #
 # config                                                                    #
@@ -95,6 +110,7 @@ class Configurable(object):
 class Config(object):
 
     GLOBAL_NAMESPACE = '*'
+    INSTANCED_CHAR = '@'
 
     def __init__(self, strict=False):
         self._CONFIGURABLES:     Dict[str, Configurable]      = {}  # namespace -> configurable
@@ -189,28 +205,62 @@ class Config(object):
     # conversion                                                            #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
+    def _convert_if_instanced_for_load(self, path, func):
+        """used when loading/setting the config"""
+        if path.startswith(Config.INSTANCED_CHAR):
+            if isinstance(func, str):
+                # get registered function if this is a string
+                if not func in self._CONFIGURABLES:
+                    raise KeyError(f'Not a valid path to a registered function: {func}')
+                func = self._CONFIGURABLES[func].func
+            else:
+                # check that the function is configurable
+                if not Configurable.can_configure(func):
+                    raise ValueError(f'value marked as Instanced is not configurable "{path}": {func}')
+                # check that the function is registered
+                fullname = Configurable.get_fullname(func)
+                if fullname not in self._CONFIGURABLES:
+                    raise KeyError(f'function set as Instanced has not been registered as a configurable "{path}": {fullname}')
+            return path[1:], _Instanced(func)
+        return path, func
+
+    def _convert_if_instanced_for_save(self, path, value):
+        """used when saving"""
+        if isinstance(value, _Instanced):
+            # no checks needed because we validated on updating/setting the config
+            path = Config.INSTANCED_CHAR + path
+            value = Configurable.get_fullname(value.func)
+        return path, value
+
     def _flat_config_to_namespace_configs(self, flat_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
         namespace_configs = {}
         # Validate names and store defaults
-        for param_name, value in flat_config.items():
-            Configurable.validate_name(param_name)
-            namespace, name = param_name.rsplit('.', 1)
+        for path, value in flat_config.items():
+            # check is instanced variable first, and convert if it is.
+            path, value = self._convert_if_instanced_for_load(path, value)
+            # then validate
+            Configurable.validate_name(path)
+            namespace, name = path.rsplit('.', 1)
             # check everything exists
             if self._strict:
                 if not self.has_namespace(namespace):
                     raise KeyError(f'namespace does not exist: {namespace}')
-                if not self.has_namespace_param(namespace, param_name):
+                if not self.has_namespace_param(namespace, name):
                     raise KeyError(f'name "{name}" on namespace "{namespace}" does not exist')
             # store new defaults
             namespace_configs.setdefault(namespace, {})[name] = value
         return namespace_configs
 
     def _namespace_configs_to_flat_config(self, ns_config: Dict[str, Dict[str, object]]):
-        return {
-            f'{namespace}.{name}': ns_config[namespace][name]
-            for namespace in sorted(ns_config)
-            for name in sorted(ns_config[namespace])
-        }
+        flat_config = {}
+        for namespace in sorted(ns_config):
+            conf = ns_config[namespace]
+            for name in sorted(conf):
+                path, value = f'{namespace}.{name}', conf[name]
+                # try convert to an instanced variable if necessary
+                path, value = self._convert_if_instanced_for_save(path, value)
+                flat_config[path] = value
+        return flat_config
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # IO                                                                    #
@@ -256,14 +306,14 @@ class Config(object):
                 sb.append('  ' if (is_l or is_g) else f'{gry}# ')
                 # dictionary key as the namespace.param
                 sb.append(f'{gry}"{clr_ns}{namespace}{gry}.{clr_param}{param}{gry}"{rst}: ')
-                # dictionary value
+                # dictionary func
                 if is_l:
                     sb.append(f'{clr_val}{repr(configured[param])}')
                 elif is_g:
                     sb.append(f'{clr_glb}{repr(configured_global[param])}')
                 # comma
                 sb.append(f'{gry},{rst}')
-                # comment if has a global value assigned to it
+                # comment if has a global func assigned to it
                 if is_g:
                     sb.append(f'  {gry}# "{Config.GLOBAL_NAMESPACE}.{param}{gry}": {repr(configured_global[param])},{rst}')
                 # new line
@@ -273,19 +323,43 @@ class Config(object):
         # generate string!
         print(''.join(sb))
 
+class _Instanced(object):
+    def __init__(self, func):
+        if not callable(func):
+            print(f'[\033[91m{func}\033[0m]')
+            func = globals()[func]
+        self.func = func
+
+    def __call__(self):
+        return self.func()
+
+    def __str__(self):
+        return self.func.__qualname__
+
+    def __repr__(self):
+        return self.func.__qualname__
+
+
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
 
+
 config = Config()
 
+import numpy as np
+
 @config
-def test(a, b, c=2, d=3, e=-2):
-    print(a, b, c, d, e)
+def random():
+    return np.random.randint(10, size=3)
+
+@config
+def test(a, b, c=2, d=3, e=-2, random=None):
+    print(a, b, c, d, e, random)
 
 @config('test.test')
-def test2(a, b, c=2, d=3, e=-1, seed=None):
-    print(a, b, c, d, e, seed)
+def test2(a, b, c=2, d=3, e=-1, seed=None, random=None):
+    print(a, b, c, d, e, seed, random)
 
 config.set({
     # global parameters
@@ -293,7 +367,7 @@ config.set({
     '*.e': -100,
 
     # Per Instance Parameters
-    # '*._random': Instanced(np.random),
+    '@*.random': random,
 
     'test.c': 55,
     'test.test.c': 77,
