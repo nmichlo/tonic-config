@@ -1,11 +1,13 @@
-import keyword
+import functools
+from typing import Dict, List, Set, Type, Union
 import os
+import keyword
 import re
 import inspect
 
 
 # ========================================================================= #
-# config                                                                    #
+# namespace                                                                 #
 # ========================================================================= #
 
 
@@ -17,181 +19,308 @@ class Namespace:
     def __init__(self):
         raise Exception('Namespace should not be instantiated')
 
+    @staticmethod
+    def is_namespace(cls):
+        return inspect.isclass(cls) and issubclass(cls, Namespace)
+
+
+# ========================================================================= #
+# configurable                                                              #
+# ========================================================================= #
+
+
+class Configurable(object):
+    # namespace pattern
+    # https://docs.python.org/3/reference/lexical_analysis.html
+    # _NAME_PATTERN = re.compile('^([a-zA-Z0-9][a-zA-Z0-9_]*)([.][a-zA-Z0-9][a-zA-Z0-9_]*)*$')
+    _NAME_PATTERN = re.compile('^([a-zA-Z0-9_]+)([.][a-zA-Z0-9_]+)*$')
+
+    def __init__(self, func, namespace=None):
+        if not callable(func):
+            raise ValueError(f'Configurable must be callable: {func}')
+        # the function which should be configured
+        self.func: callable = func
+        # the namespace which shares parameter values
+        self.namespace: str = self.shortname if (namespace is None) else self.validate_name(namespace)
+        # if the function needs to be remade
+        self._dirty = True
+
+    @functools.cached_property
+    def fullname(self) -> str:
+        """
+        This name is not validated and could be wrong!
+        Returns the import path to a function
+        """
+        # path to the module that the function is in without extension
+        module_path = os.path.splitext(inspect.getmodule(self.func).__file__)[0]
+        # strip the working directory from the path
+        working_dir = os.getcwd().rstrip('/') + '/'
+        assert module_path.startswith(working_dir)
+        module_path = module_path[len(working_dir):]
+        # replace slashes with dots and combine
+        fullname = f'{module_path.replace("/", ".")}.{self.shortname}'
+        return self.validate_name(fullname)
+
+    @functools.cached_property
+    def shortname(self) -> str:
+        shortname = self.func.__qualname__
+        shortname = shortname.replace('.<locals>', '')  # handle nested functions
+        return self.validate_name(shortname)
+
+    @functools.cached_property
+    def configurable_param_names(self) -> Set[str]:
+        params = inspect.signature(self.func).parameters
+        return {k for k, p in params.items() if (p.default is not p.empty)}
+
+    @staticmethod
+    def can_configure(obj):
+        return inspect.isfunction(obj) or inspect.isclass(obj)
+
+    @staticmethod
+    def validate_name(name) -> str:
+        if not Configurable._NAME_PATTERN.match(name):
+            raise ValueError(f'Invalid namespace and name: {repr(name)}')
+        if any(keyword.iskeyword(n) for n in name.split('.')):
+            raise ValueError(f'Namespace contains a python identifier')
+        return name
+
+    def make_wrapped_func(self, ns_config):
+        assert self.is_dirty, 'Cannot make function if not dirty'
+        self._is_dirty = False
+        return functools.partial(self.func, **{
+            k: v
+            for k, v in ns_config.items()
+            if k in self.configurable_param_names
+        })
+
+    @property
+    def is_dirty(self) -> bool:
+        return self._is_dirty
+
+    def __str__(self):
+        return self.fullname
+
+
+# ========================================================================= #
+# config                                                                    #
+# ========================================================================= #
+
 
 class Config(object):
 
-    def __init__(self, strict=True):
-        # current configuration
-        self._CONFIG = {}       # namespace to dict of parameters to values
-        self._USED = {}         # namespace to set of parameter names
-        self._DEFAULTS = {}     # full_namespace to dict of parameters to values
-        self._FULL_TO_NAME = {} # full_namespace to namespace
-        # namespace pattern
-        # https://docs.python.org/3/reference/lexical_analysis.html
-        self._pattern = re.compile('^([a-zA-Z0-9][a-zA-Z0-9_]*)([.][a-zA-Z0-9][a-zA-Z0-9_]*)*$')
+    def __init__(self, strict=True, is_namespaced=True):
+        self._CONFIGURABLES:      Dict[str, Configurable]       = {}
+        self._NAMESPACE_PARAMS:   Dict[str, Set[str]]           = {}
+        self._NAMESPACE_CONFIGS:  Dict[str, Dict[str, object]]  = {}
         # if namespaces must not conflict
-        self._strict = strict
+        self._strict: bool = strict
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Helper                                                                #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _get_namespace(self, func, full=True):
-        """
-        This name is not validated and could be wrong!
-        Returns the import path to a function
-        """
-        if full:
-            # path to the module that the function is in without extension
-            module_path = os.path.splitext(inspect.getmodule(func).__file__)[0]
-            # strip the working directory from the path
-            working_dir = os.getcwd().rstrip('/') + '/'
-            assert module_path.startswith(working_dir)
-            module_path = module_path[len(working_dir):]
-            # replace slashes with dots and combine
-            return f'{module_path.replace("/", ".")}.{self._get_name(func)}'
-        else:
-            return self._get_name(func)
-
-    def _get_name(self, func):
-        name = func.__qualname__
-        name = name.replace('.<locals>', '')  # handle nested functions
-        return name
-
-    def _register_function(self, func, namespace):
+    def _register_function(self, func, namespace=None) -> Configurable:
         """Register a function to the config engine"""
-        namespace_full = self._get_namespace(func, full=True)
-        self._validate_name(namespace_full)
-        # get function parameters with default values
-        params = inspect.signature(func).parameters
-        params_default = {k: p for k, p in params.items() if (p.default is not p.empty)}
-        # add parameter names to correct namespace
-        if self._strict:
-            if namespace in self._USED:
-                raise KeyError(f'namespace already used: {namespace}')
-        self._USED.setdefault(namespace, set()).update(params_default.keys())
-        # store defaults under full_namespace, must not conflict!
-        assert namespace_full not in self._DEFAULTS, 'This should never happen!'
-        self._FULL_TO_NAME[namespace_full] = namespace
-        self._DEFAULTS[namespace_full] = {k: p.default for k, p in params_default.items()}
+        configurable = Configurable(func, namespace)
 
-    def _validate_name(self, name):
-        if not self._pattern.match(name):
-            raise ValueError(f'Invalid namespace and name: {repr(name)}')
-        if any(keyword.iskeyword(n) for n in name.split('.')):
-            raise ValueError(f'Namespace contains a python identifier')
+        # check that we have not already registered the configurable
+        if configurable.fullname in self._CONFIGURABLES:
+            raise KeyError(f'configurable already registered: {configurable.fullname}')
+        self._CONFIGURABLES[configurable.fullname] = configurable
+
+        # check that we have not registered the namespace
+        if self._strict:
+            if configurable.namespace is self._NAMESPACE_PARAMS:
+                raise KeyError(f'strict mode enabled, namespaces must be unique: {namespace}')
+        self._NAMESPACE_PARAMS.setdefault(configurable.namespace, set()).update(configurable.configurable_param_names)
+
+        # return the new configurable
+        return configurable
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Decorators                                                            #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def __call__(self, func_or_namespace, full=False):
-        # check if the decorator was called with arguments
-        called_with_args = not (inspect.isfunction(func_or_namespace) or inspect.isclass(func_or_namespace))
-        # get the namespace
-        namespace = func_or_namespace if called_with_args else self._get_namespace(func_or_namespace, full=full)
-        self._validate_name(namespace)
-        # decorate!
-        def wrap(func):
-            self._register_function(func, namespace)
-            # make a new function to call those parameters with config values if they exist
-            def call_with_config(*args, **kwargs):
-                return func(*args, **{
-                    **self._CONFIG.get(namespace, {}),  # config
-                    **kwargs                            # override config with passed kwargs
-                })
-            # return new function
-            return call_with_config
-        # act as decorator if not called with arguments, otherwise return the decorator
-        return wrap if called_with_args else wrap(func_or_namespace)
+    def __call__(self, namespace):
+        def decorate(func):
+            configurable = self._register_function(func, namespace_str)
+            wrapped_func = None
 
-    def set(self, config):
+            @functools.wraps(func)  # copy name, docs, etc.
+            def caller(*args, **kwargs):
+                nonlocal wrapped_func
+                if configurable.is_dirty:
+                    ns_config = self._NAMESPACE_CONFIGS[configurable.namespace] if configurable.namespace in self._NAMESPACE_CONFIGS else {}
+                    wrapped_func = configurable.make_wrapped_func(ns_config)
+                    print(f'[debug]: remade {configurable}')
+                return wrapped_func(*args, **kwargs)
+            return caller
+
+        # support call without arguments
+        if Configurable.can_configure(namespace):
+            namespace_str = None  # compute default
+            return decorate(namespace)
+        else:
+            namespace_str = namespace
+            return decorate
+
+    def has_namespace(self, namespace) -> bool:
+        return namespace not in self._NAMESPACE_PARAMS
+
+    def has_namespace_param(self, namespace, param_name):
+        return self.has_namespace(namespace) and (param_name in self._NAMESPACE_PARAMS[namespace])
+
+    def _raw_config_to_namespace_configs(self, raw_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
+        raw_config = self._as_raw_config(raw_config)
+        namespace_configs = {}
+        # Validate names and store defaults
+        for param_name, value in raw_config.items():
+            Configurable.validate_name(param_name)
+            namespace, name = param_name.rsplit('.', 1)
+            # check everything exists
+            if self.has_namespace(namespace):
+                raise KeyError(f'namespace does not exist: {namespace}')
+            if self.has_namespace_param(namespace, param_name):
+                raise KeyError(f'name "{name}" on namespace "{namespace}" does not exist')
+            # store new defaults
+            namespace_configs.setdefault(namespace, {})[name] = value
+        return namespace_configs
+
+    def _namespace_configs_to_raw_config(self, ns_config: Dict[str, Dict[str, object]]):
+        return {
+            f'{namespace}.{name}': value
+            for namespace, names in ns_config.items()
+            for name, value in names.items()
+        }
+
+    def _mark_all_dirty(self):
+        # mark everything as dirty
+        # TODO: detect changes?
+        for path, configurable in self._CONFIGURABLES.items():
+            configurable._is_dirty = True
+
+    def reset(self):
+        self.set({})
+
+    def set(self, raw_config):
         """Set the current configuration"""
-        config = self.as_config(config)
-        # Validate names
-        self._CONFIG = {}
-        for k, v in config.items():
-            self._validate_name(k)
-            namespace, name = k.rsplit('.', 1)
-            self._CONFIG.setdefault(namespace, {})[name] = v
-        # Check names exist
-        for namespace, n_config in self._CONFIG.items():
-            if namespace not in self._USED:
-                raise KeyError(f'namespace does not exist: {namespace}'
-                               f' Valid namespaces are: [{", ".join(self._USED.keys())}]')
-            for name in n_config.keys():
-                if name not in self._USED[namespace]:
-                    raise KeyError(f'name "{name}" on namespace "{namespace}" does not exist'
-                                   f' Valid names are: [{", ".join(self._USED[namespace])}]')
+        self._NAMESPACE_CONFIGS = self._raw_config_to_namespace_configs(raw_config)
+        self._mark_all_dirty()
 
-    def update(self, config):
+    def update(self, raw_config):
         """Update the current configuration, overriding values"""
-        self.set({
-            **self._USED,
-            **self.as_config(config),
-        })
+        ns_config = self._raw_config_to_namespace_configs(self._as_raw_config(raw_config))
+        # merge all namespace configs
+        for namespace, ns_config in ns_config.items():
+            self._NAMESPACE_CONFIGS.setdefault(namespace, {}).update(ns_config)
+        self._mark_all_dirty()
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Config classes                                                        #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _is_namespace_class(self, cls):
-        return inspect.isclass(cls) and issubclass(cls, Namespace)
-
-    def as_config(self, config):
+    def _as_raw_config(self, config: Union[Dict, Type[Namespace]]) -> Dict[str, object]:
         """Make sure the config is a dictionary, attempt conversion if it is not"""
         if isinstance(config, dict):
             return config
         else:
-            assert self._is_namespace_class(config)
-        dict_config, path = {}, config.__name__
+            assert Namespace.is_namespace(config)
+        # convert if the config is actually a namespace class
+        raw_config: Dict[str, object] = {}
+        path = config.__name__
         for name in (name for name in dir(config) if not name.startswith('_')):
             value = getattr(config, name)
-            if self._is_namespace_class(value):
-                for n, v in self.as_config(value).items():
-                    dict_config[f'{path}.{n}'] = v
+            if Namespace.is_namespace(value):
+                for n, v in self._as_raw_config(value).items():
+                    raw_config[f'{path}.{n}'] = v
             else:
-                dict_config[f'{path}.{name}'] = value
-        return dict_config
+                raw_config[f'{path}.{name}'] = value
+        # return the raw config
+        return raw_config
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # IO                                                                    #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def save_config(self, file_path):
+    def save_config(self, file_path, namespaced=True):
         import toml
         with open(file_path, 'w') as file:
-            toml.dump(self._CONFIG, file)
+            data = self._NAMESPACE_CONFIGS
+            data = data if namespaced else self._namespace_configs_to_raw_config(data)
+            toml.dump(data, file)
+            print(f'[SAVED CONFIG]: {os.path.abspath(file_path)}')
 
-    def load_config(self, file_path):
+    def load_config(self, file_path, namespaced=True):
         import toml
         with open(file_path, 'r') as file:
-            config = toml.load(file)
-            self.set(config)
+            data = toml.load(file)
+            data = self._namespace_configs_to_raw_config(data) if namespaced else data
+            self.set(data)
+            print(f'[LOADED CONFIG]: {os.path.abspath(file_path)}')
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Utility                                                               #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def print(self, full=False):
+    def print(self):
         # colours
-        grn, red, ylw, gry, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[0m'
-        print_values = []
-        # generate values
-        for full_namespace in sorted(self._FULL_TO_NAME, key=self._FULL_TO_NAME.__getitem__):
-            full_namespace_defaults = self._DEFAULTS[full_namespace]
-            namespace = self._FULL_TO_NAME[full_namespace]
-            namespace_config = self._CONFIG.get(namespace, {})
-            for name in sorted(full_namespace_defaults):
-                if name in sorted(namespace_config):
-                    print_values.append((f'{gry}{full_namespace if full else namespace}{rst}.{red}{name}{rst}', f'{red}{namespace_config[name]}{rst} ({ylw}{full_namespace_defaults[name]}{rst})'))
+        grn, red, ylw, gry, ppl, blu, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[95m', '\033[94m', '\033[0m'
+        # print namespaces
+        for namespace in sorted(self._NAMESPACE_PARAMS):
+            configured = self._NAMESPACE_CONFIGS.get(namespace, {})
+            print(f'[{gry}"{ppl}{namespace}{gry}"{rst}]')
+            for param in sorted(self._NAMESPACE_PARAMS[namespace]):
+                if param in configured:
+                    print(f'{ylw}{param}{rst} = {blu}{repr(configured[param])}{rst}')
                 else:
-                    print_values.append((f'{gry}{full_namespace if full else namespace}{rst}.{grn}{name}{rst}', f'{ylw}{full_namespace_defaults[name]}{rst}'))
-        # print all values
-        max_len = max(len(x[0]) for x in print_values)
-        for name_str, val_str in print_values:
-            print(f'{name_str:{max_len}s} = {val_str}')
+                    print(f'{red}{param}{rst}')
+            print()
+
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
+
+config = Config()
+
+@config
+def test(a, b, c=2, d=3):
+    print(a, b, c, d)
+
+@config('test.test')
+def test2(a, b, c=2, d=3):
+    print(a, b, c, d)
+
+config.set({
+    # global parameters
+    # '*._seed': 100,
+
+    # Per Instance Parameters
+    # '*._random': Instanced(np.random),
+
+    'test.c': 55,
+    'test.test.d': 77,
+    'test.test.c': 100,
+})
+
+test(0, 1, c=77)
+test(0, 1)
+test2(0, 1)
+test2(0, 1)
+
+config.save_config('test_conf.toml')
+config.reset()
+
+test(0, 1)
+test(0, 1)
+test2(0, 1)
+test2(0, 1)
+
+config.load_config('test_conf.toml')
+
+test(0, 1)
+test(0, 1)
+test2(0, 1)
+test2(0, 1)
+
+config.print()
