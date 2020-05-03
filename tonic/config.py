@@ -202,14 +202,14 @@ class Config(object):
     def reset(self):
         self.set({})
 
-    def set(self, raw_config):
+    def set(self, ns_config):
         """Set the current configuration"""
-        self._NAMESPACE_CONFIGS = self._raw_config_to_namespace_configs(raw_config)
+        self._NAMESPACE_CONFIGS = ns_config
         self._mark_all_dirty()
 
-    def update(self, raw_config):
+    def update(self, ns_config):
         """Update the current configuration, overriding values"""
-        ns_config = self._raw_config_to_namespace_configs(self._as_raw_config(raw_config))
+        ns_config = self._as_ns_config(ns_config)
         # merge all namespace configs
         for namespace, ns_config in ns_config.items():
             self._NAMESPACE_CONFIGS.setdefault(namespace, {}).update(ns_config)
@@ -238,6 +238,13 @@ class Config(object):
         # return the raw config
         return raw_config
 
+    def _as_ns_config(self, config: Union[Dict, Type[Namespace]]) -> Dict[str, Dict[str, object]]:
+        if isinstance(config, dict):
+            return config
+        else:
+            assert Namespace.is_namespace(config)
+        return self._raw_config_to_namespace_configs(self._as_raw_config(config))
+
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # IO                                                                    #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
@@ -254,7 +261,7 @@ class Config(object):
         import toml
         with open(file_path, 'r') as file:
             data = toml.load(file)
-            data = self._namespace_configs_to_raw_config(data) if namespaced else data
+            data = data if namespaced else self._raw_config_to_namespace_configs(data)
             self.set(data)
             print(f'[LOADED CONFIG]: {os.path.abspath(file_path)}')
 
@@ -271,9 +278,9 @@ class Config(object):
             print(f'[{gry}"{ppl}{namespace}{gry}"{rst}]')
             for param in sorted(self._NAMESPACE_PARAMS[namespace]):
                 if param in configured:
-                    print(f'{ylw}{param}{rst} = {blu}{repr(configured[param])}{rst}')
+                    print(f'{gry}"{blu}{param}{gry}"{rst} = {ylw}{repr(configured[param])}{rst}')
                 else:
-                    print(f'{red}{param}{rst}')
+                    print(f'{gry}"{grn}{param}{gry}"{rst}')
             print()
 
 
@@ -298,9 +305,8 @@ config.set({
     # Per Instance Parameters
     # '*._random': Instanced(np.random),
 
-    'test.c': 55,
-    'test.test.d': 77,
-    'test.test.c': 100,
+    'test': dict(c=55),
+    'test.test': dict(c=77, d=100),
 })
 
 test(0, 1, c=77)
