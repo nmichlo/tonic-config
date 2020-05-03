@@ -7,40 +7,6 @@ import inspect
 
 
 # ========================================================================= #
-# namespace                                                                 #
-# ========================================================================= #
-
-
-class Namespace:
-    """
-    Nested namespace classes with member values can be converted to a configuration
-    where the name of the classes in the hierarchy correspond to the namespace names
-    """
-    def __init__(self):
-        raise Exception('Namespace should not be instantiated')
-
-    @staticmethod
-    def is_namespace(cls):
-        return inspect.isclass(cls) and issubclass(cls, Namespace)
-
-    @classmethod
-    def to_dict(cls):
-        raw_config: Dict[str, object] = {}
-        path = config.__name__
-        # convert recursively
-        for name in (name for name in dir(config) if not name.startswith('_')):
-            value = getattr(config, name)
-            if Namespace.is_namespace(value):
-                for n, v in value.to_dict().items():
-                    raw_config[f'{path}.{n}'] = v
-            else:
-                raw_config[f'{path}.{name}'] = value
-        # converted!
-        return raw_config
-
-
-
-# ========================================================================= #
 # configurable                                                              #
 # ========================================================================= #
 
@@ -206,14 +172,14 @@ class Config(object):
     def reset(self):
         self.set({})
 
-    def set(self, raw_config):
+    def set(self, flat_config):
         """Set the current configuration"""
-        self._NAMESPACE_CONFIGS = self._raw_config_to_namespace_configs(self._as_raw_config(raw_config))
+        self._NAMESPACE_CONFIGS = self._flat_config_to_namespace_configs(flat_config)
         self._mark_all_dirty()
 
-    def update(self, raw_config):
+    def update(self, flat_config):
         """Update the current configuration, overriding values"""
-        ns_config = self._raw_config_to_namespace_configs(self._as_raw_config(raw_config))
+        ns_config = self._flat_config_to_namespace_configs(flat_config)
         # merge all namespace configs
         for namespace, ns_conf in ns_config.items():
             self._NAMESPACE_CONFIGS.setdefault(namespace, {}).update(ns_conf)
@@ -223,18 +189,10 @@ class Config(object):
     # conversion                                                            #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _as_raw_config(self, config: Union[Dict, Type[Namespace]]) -> Dict[str, object]:
-        """Make sure the config is a dictionary, attempt conversion if it is not"""
-        if isinstance(config, dict):
-            return config
-        else:
-            assert Namespace.is_namespace(config)
-            return config.to_dict()
-
-    def _raw_config_to_namespace_configs(self, raw_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
+    def _flat_config_to_namespace_configs(self, flat_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
         namespace_configs = {}
         # Validate names and store defaults
-        for param_name, value in raw_config.items():
+        for param_name, value in flat_config.items():
             Configurable.validate_name(param_name)
             namespace, name = param_name.rsplit('.', 1)
             # check everything exists
@@ -247,7 +205,7 @@ class Config(object):
             namespace_configs.setdefault(namespace, {})[name] = value
         return namespace_configs
 
-    def _namespace_configs_to_raw_config(self, ns_config: Dict[str, Dict[str, object]]):
+    def _namespace_configs_to_flat_config(self, ns_config: Dict[str, Dict[str, object]]):
         return {
             f'{namespace}.{name}': ns_config[namespace][name]
             for namespace in sorted(ns_config)
@@ -261,7 +219,7 @@ class Config(object):
     def save_config(self, file_path):
         import toml
         with open(file_path, 'w') as file:
-            data = self._namespace_configs_to_raw_config(self._NAMESPACE_CONFIGS)
+            data = self._namespace_configs_to_flat_config(self._NAMESPACE_CONFIGS)
             toml.dump(data, file)
             print(f'[SAVED CONFIG]: {os.path.abspath(file_path)}')
 
