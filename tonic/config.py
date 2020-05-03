@@ -1,5 +1,5 @@
 import functools
-from typing import Dict, List, Set, Type, Union
+from typing import Dict, Set, Type, Union
 import os
 import keyword
 import re
@@ -108,10 +108,10 @@ class Configurable(object):
 
 class Config(object):
 
-    def __init__(self, strict=True, is_namespaced=True):
-        self._CONFIGURABLES:      Dict[str, Configurable]       = {}
-        self._NAMESPACE_PARAMS:   Dict[str, Set[str]]           = {}
-        self._NAMESPACE_CONFIGS:  Dict[str, Dict[str, object]]  = {}
+    def __init__(self, strict=False):
+        self._CONFIGURABLES:     Dict[str, Configurable]      = {}  # namespace -> configurable
+        self._NAMESPACE_PARAMS:  Dict[str, Set[str]]          = {}  # namespace -> param_names
+        self._NAMESPACE_CONFIGS: Dict[str, Dict[str, object]] = {}  # namespace -> param_names -> values
         # if namespaces must not conflict
         self._strict: bool = strict
 
@@ -130,7 +130,7 @@ class Config(object):
 
         # check that we have not registered the namespace
         if self._strict:
-            if configurable.namespace is self._NAMESPACE_PARAMS:
+            if configurable.namespace in self._NAMESPACE_PARAMS:
                 raise KeyError(f'strict mode enabled, namespaces must be unique: {namespace}')
         self._NAMESPACE_PARAMS.setdefault(configurable.namespace, set()).update(configurable.configurable_param_names)
 
@@ -249,7 +249,7 @@ class Config(object):
     # IO                                                                    #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def save_config(self, file_path, namespaced=True):
+    def save_config(self, file_path, namespaced=False):
         import toml
         with open(file_path, 'w') as file:
             data = self._NAMESPACE_CONFIGS
@@ -257,7 +257,7 @@ class Config(object):
             toml.dump(data, file)
             print(f'[SAVED CONFIG]: {os.path.abspath(file_path)}')
 
-    def load_config(self, file_path, namespaced=True):
+    def load_config(self, file_path, namespaced=False):
         import toml
         with open(file_path, 'r') as file:
             data = toml.load(file)
@@ -269,18 +269,24 @@ class Config(object):
     # Utility                                                               #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def print(self):
+    def print(self, namespaced=False):
         # colours
         grn, red, ylw, gry, ppl, blu, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[95m', '\033[94m', '\033[0m'
         # print namespaces
         for namespace in sorted(self._NAMESPACE_PARAMS):
             configured = self._NAMESPACE_CONFIGS.get(namespace, {})
-            print(f'[{gry}"{ppl}{namespace}{gry}"{rst}]')
+            if namespaced:
+                print(f'[{gry}"{ppl}{namespace}{gry}"{rst}]')
             for param in sorted(self._NAMESPACE_PARAMS[namespace]):
-                if param in configured:
-                    print(f'{gry}"{blu}{param}{gry}"{rst} = {ylw}{repr(configured[param])}{rst}')
-                else:
-                    print(f'{gry}"{grn}{param}{gry}"{rst}')
+                has_value = param in configured
+                param_clr = blu if has_value else grn
+                str_namespace = "" if namespaced else f"{ppl}{namespace}{gry}."
+                str_path = f'{gry}"{str_namespace}{param_clr}{param}{gry}"{rst}'
+                str_value = f' = {ylw}{repr(configured[param])}{rst}' if has_value else ''
+                print(f'{str_path}{str_value}')
+            if namespaced:
+                print()
+        if not namespaced:
             print()
 
 
