@@ -1,5 +1,5 @@
 
-from tonic.config import Config, Namespace
+from tonic.config import Config
 
 
 # ========================================================================= #

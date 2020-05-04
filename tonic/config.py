@@ -173,7 +173,8 @@ class Config(object):
                     ns_config = self._NAMESPACE_CONFIGS.get(configurable.namespace, {})
                     global_config = self._NAMESPACE_CONFIGS.get(Config.GLOBAL_NAMESPACE, {})
                     wrapped_func = configurable.make_wrapped_func(ns_config, global_config)
-                    print(f'[debug]: remade {configurable}')
+                    # TODO: log to debug logger
+                    # print(f'[debug]: remade {configurable}')
                 return wrapped_func(*args, **kwargs)
             return caller
 
@@ -290,6 +291,8 @@ class Config(object):
         values if the values are specified in the current configuration.
         The printed string in most simple cases should be valid python code to allow easy copy pasting!
         - it does not reduce overridden values down to global variables, but comments if that is the reason.
+
+        TODO: clean up this method... it is super messy and horrible...
         """
         grn, red, ylw, gry, ppl, blu, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[95m', '\033[94m', '\033[0m'
         clr_ns, clr_param, clr_val, clr_glb = ppl, blu, ylw, red
@@ -305,17 +308,20 @@ class Config(object):
                 # space or comment out
                 sb.append('  ' if (is_l or is_g) else f'{gry}# ')
                 # dictionary key as the namespace.param
-                sb.append(f'{gry}"{clr_ns}{namespace}{gry}.{clr_param}{param}{gry}"{rst}: ')
+                val = (configured[param] if is_l else configured_global[param]) if (is_l or is_g) else None
+                sb.append(f'{gry}"{grn}{_Instanced.get_prefix(val)}{rst}{clr_ns}{namespace}{gry}.{clr_param}{param}{gry}"{rst}: ')
                 # dictionary func
-                if is_l:
-                    sb.append(f'{clr_val}{repr(configured[param])}')
-                elif is_g:
-                    sb.append(f'{clr_glb}{repr(configured_global[param])}')
+                if is_l or is_g:
+                    if is_l:
+                        sb.append(f'{clr_val}{repr(val)}')
+                    elif is_g:
+                        sb.append(f'{clr_glb}{repr(val)}')
                 # comma
                 sb.append(f'{gry},{rst}')
                 # comment if has a global func assigned to it
                 if is_g:
-                    sb.append(f'  {gry}# "{Config.GLOBAL_NAMESPACE}.{param}{gry}": {repr(configured_global[param])},{rst}')
+                    val = configured_global[param]
+                    sb.append(f'  {gry}# "{_Instanced.get_prefix(val)}{Config.GLOBAL_NAMESPACE}.{param}{gry}": {repr(val)},{rst}')
                 # new line
                 sb.append('\n')
         # closing brace
@@ -334,65 +340,17 @@ class _Instanced(object):
         return self.func()
 
     def __str__(self):
-        return self.func.__qualname__
+        return repr(self)
 
     def __repr__(self):
-        return self.func.__qualname__
+        return Configurable.get_fullname(self.func)
 
+    @staticmethod
+    def get_prefix(value):
+        if isinstance(value, _Instanced):
+            return Config.INSTANCED_CHAR
+        return ''
 
 # ========================================================================= #
 # END                                                                       #
 # ========================================================================= #
-
-
-config = Config()
-
-import numpy as np
-
-@config
-def random():
-    return np.random.randint(10, size=3)
-
-@config
-def test(a, b, c=2, d=3, e=-2, random=None):
-    print(a, b, c, d, e, random)
-
-@config('test.test')
-def test2(a, b, c=2, d=3, e=-1, seed=None, random=None):
-    print(a, b, c, d, e, seed, random)
-
-config.set({
-    # global parameters
-    '*.seed': 100,
-    '*.e': -100,
-
-    # Per Instance Parameters
-    '@*.random': random,
-
-    'test.c': 55,
-    'test.test.c': 77,
-    'test.test.d': 100,
-    'test.test.e': 100,
-})
-
-test(0, 1, c=77)
-test(0, 1)
-test2(0, 1)
-test2(0, 1)
-
-config.save_config('test_conf.toml')
-config.reset()
-
-test(0, 1)
-test(0, 1)
-test2(0, 1)
-test2(0, 1)
-
-config.load_config('test_conf.toml')
-
-test(0, 1)
-test(0, 1)
-test2(0, 1)
-test2(0, 1)
-
-config.print()
