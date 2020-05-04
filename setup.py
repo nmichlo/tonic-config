@@ -1,3 +1,7 @@
+# UPLOADING TO PYPI... I really should remember this by now:
+# $ python setup.py sdist
+# $ twine upload dist/*
+
 import subprocess
 import setuptools
 
