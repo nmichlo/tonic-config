@@ -11,6 +11,50 @@ from cached_property import cached_property
 
 
 # ========================================================================= #
+# GLOBAL VARS                                                               #
+# ========================================================================= #
+
+
+GLOBAL_NS_CHAR = '*'
+INSTANCED_CHAR = '@'
+
+# namespace pattern
+# https://docs.python.org/3/reference/lexical_analysis.html
+_ID_PATTERN = re.compile(rf'^(\w+[.])*(\w+)$')
+_KEY_PATTERN = re.compile(rf'^[{INSTANCED_CHAR}]?(([{GLOBAL_NS_CHAR}][.])|(\w+[.])+)?(\w+)$')
+
+
+# ========================================================================= #
+# HELPER FUNCTIONS                                                          #
+# ========================================================================= #
+
+
+def validate_id(name) -> str:
+    """
+    ids can only contain valid python identifiers separated by dots.
+    :param name: name to validate according to _ID_PATTERN
+    :return: return the input name exactly as is.
+    """
+    if not _ID_PATTERN.match(name):
+        raise ValueError(f'Invalid namespace and name: {repr(name)}')
+    if any(keyword.iskeyword(n) for n in name.split('.')):
+        raise ValueError(f'Namespace and name contains a python identifier')
+    return name
+
+
+def validate_key(name):
+    """
+    Like validate_id(), but according to _KEY_PATTERN, which
+    can have a global namespace '*' as well as be marked as an instanced value with @
+    """
+    if not _KEY_PATTERN.match(name):
+        raise ValueError(f'Invalid key: {repr(name)}')
+    if any(keyword.iskeyword(n) for n in name.lstrip(INSTANCED_CHAR).split('.')):
+        raise ValueError(f'Key contains a python identifier')
+    return name
+
+
+# ========================================================================= #
 # configurable                                                              #
 # ========================================================================= #
 
@@ -26,9 +70,6 @@ class Configurable(object):
 
     Used internally by Config.
     """
-    # namespace pattern
-    # https://docs.python.org/3/reference/lexical_analysis.html
-    _KEY_PATTERN  = re.compile(r'^@?(([*][.])|(\w+[.])+)?(\w+)$')
 
     def __init__(self, func, nid=None, cid=None):
         if not Configurable.can_configure(func):
@@ -36,9 +77,9 @@ class Configurable(object):
         # the function which should be configured
         self._func: ConfigurableFunc = func
         # the configurable identifier - we use the nid instead of the cid by default
-        self.cid: str = Configurable.nid_from_func(func) if (cid is None) else self.validate_id(cid)
+        self.cid: str = Configurable.id_from_func(func) if (cid is None) else validate_id(cid)
         # the namespace which shares parameter values
-        self.nid: str = Configurable.nid_from_func(func) if (nid is None) else self.validate_id(nid)
+        self.nid: str = Configurable.id_from_func(func) if (nid is None) else validate_id(nid)
         # if the function needs to be remade
         self._is_dirty = True
         # temp configurations, only set when dirty
@@ -116,44 +157,13 @@ class Configurable(object):
         return isinstance(obj, (types.FunctionType, types.MethodType, type))
 
     @staticmethod
-    def cid_from_func(func) -> str:
-        """
-        This name is not validated and could be wrong!
-        Returns the import path to a function
-        """
-        # register to the module that the function is in without extension
-        module_path = os.path.splitext(inspect.getmodule(func).__file__)[0]
-        # strip the working directory from the register
-        working_dir = os.getcwd().rstrip('/') + '/'
-        assert module_path.startswith(working_dir)
-        module_path = module_path[len(working_dir):]
-        # replace slashes with dots and combine
-        fullname = f'{module_path.replace("/", ".")}.{Configurable.nid_from_func(func)}'
-        return Configurable.validate_id(fullname)
-
-    @staticmethod
-    def nid_from_func(func) -> str:
+    def id_from_func(func) -> str:
         """
         The processed __qualname__ of the function or class.
         """
         nid = func.__qualname__
         nid = nid.replace('.<locals>', '')  # handle nested functions
-        return Configurable.validate_id(nid)
-
-    @staticmethod
-    def validate_id(name) -> str:
-        """
-        ids can only contain valid python identifiers separated by dots.
-
-        :param name: name to validate according to _Configurable._NAME_PATTERN
-        :return: return the input name exactly as is.
-        """
-        # CHECK PATTERN
-        if not Configurable._KEY_PATTERN.match(name):
-            raise ValueError(f'Invalid namespace and name: {repr(name)}')
-        if any(keyword.iskeyword(n) for n in name.split('.')):
-            raise ValueError(f'Namespace and name contains a python identifier')
-        return name
+        return validate_id(nid)
 
 
 # ========================================================================= #
@@ -165,7 +175,7 @@ class Namespace(object):
     def __init__(self, nid):
         self.nid: str = nid
         self._param_names: Set[str] = set()
-        self._configurables: Dict[str, Configurable] = {}
+        self._configurables: Set[str] = set()
 
     def __contains__(self, param):
         return param in self._param_names
@@ -173,18 +183,12 @@ class Namespace(object):
     def __iter__(self):
         return self._param_names.__iter__()
 
-    def get_configurable(self, cid: str) -> Configurable:
-        return self._configurables[cid]
-
     def register_configurable(self, configurable: Configurable):
-        if self.has_configurable(configurable):
+        if configurable.cid in self._configurables:
             raise KeyError('Configurable already registered on namespace')
         # register configurable with namespace
-        self._configurables[configurable.cid] = configurable
+        self._configurables.add(configurable.cid)
         self._param_names.update(configurable.configurable_param_names)
-
-    def has_configurable(self, configurable: Configurable):
-        return configurable.cid in self._configurables
 
 
 # ========================================================================= #
@@ -194,31 +198,10 @@ class Namespace(object):
 
 class Config(object):
 
-    GLOBAL_NAMESPACE = '*'
-    INSTANCED_CHAR = '@'
-
     def __init__(self):
-        self._configurables: Dict[str, Configurable] = {}
-        self._namespaces: Dict[str, Namespace] = {}
-        self._namespace_configs: Dict[str, Dict[str, object]] = {}
-
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
-    # getters                                                               #
-    # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
-
-    def has_namespace(self, namespace) -> bool:
-        """
-        Check if a namespace exists, but also handles the case of the GLOBAL_NAMESPACE
-        which is usually not a valid registration.
-        """
-        return namespace in self._namespaces
-
-    def has_namespace_param(self, namespace, param_name) -> bool:
-        """
-        If a namespace has the specified parameter.
-        returns false if the namespace itself does not exist instead of raising a KeyError
-        """
-        return self.has_namespace(namespace) and (param_name in self._namespaces[namespace])
+        self._configurables: Dict[str, Configurable] = {}           # cid -> configurable
+        self._namespaces: Dict[str, Namespace] = {}                 # nid -> namespace
+        self._namespace_configs: Dict[str, Dict[str, object]] = {}  # nid -> param_names -> values
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # configurables                                                         #
@@ -227,7 +210,7 @@ class Config(object):
     def _reconfigure(self, configurable: Configurable):
         configurable.reconfigure(
             self._namespace_configs.get(configurable.nid, {}),
-            self._namespace_configs.get(Config.GLOBAL_NAMESPACE, {})
+            self._namespace_configs.get(GLOBAL_NS_CHAR, {})
         )
 
     def _reconfigure_all(self) -> None:
@@ -236,7 +219,7 @@ class Config(object):
         Used internally by set() and update().
         TODO: This is not the most efficient implementation, changes are not detected.
         """
-        global_config = self._namespace_configs.get(Config.GLOBAL_NAMESPACE, {})
+        global_config = self._namespace_configs.get(GLOBAL_NS_CHAR, {})
         for configurable in self._configurables.values():
             ns_config = self._namespace_configs.get(configurable.nid, {})
             configurable.reconfigure(ns_config, global_config)
@@ -344,7 +327,7 @@ class Config(object):
             # check is instanced variable first, and convert if it is.
             key, value = Instanced.convert_for_load(self._configurables, key, value)
             # then validate
-            Configurable.validate_id(key)
+            validate_key(key)
             namespace, param = key.rsplit('.', 1)
             # store new defaults
             namespace_configs.setdefault(namespace, {})[param] = value
@@ -379,7 +362,6 @@ class Config(object):
         with open(file_path, 'w') as file:
             data = self._namespace_configs_to_flat_config(self._namespace_configs)
             toml.dump(data, file)
-            print(f'[SAVED CONFIG]: {os.path.abspath(file_path)}')
 
     def load_config(self, file_path) -> None:
         """
@@ -390,13 +372,12 @@ class Config(object):
         with open(file_path, 'r') as file:
             data = toml.load(file)
             self.set(data)
-            print(f'[LOADED CONFIG]: {os.path.abspath(file_path)}')
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Utility                                                               #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def print(self) -> None:
+    def to_pretty_string(self) -> str:
         """
         Print out all the configurable parameters along with their namespace as well as their
         values if the values are specified in the current configuration.
@@ -408,7 +389,7 @@ class Config(object):
         grn, red, ylw, gry, ppl, blu, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[95m', '\033[94m', '\033[0m'
         clr_ns, clr_param, clr_val, clr_glb = ppl, blu, ylw, red
         # print namespaces
-        configured_global = self._namespace_configs.get(Config.GLOBAL_NAMESPACE, {})
+        configured_global = self._namespace_configs.get(GLOBAL_NS_CHAR, {})
         # opening brace
         sb = [f'{gry}{{{rst}\n']
         # append strings
@@ -429,14 +410,13 @@ class Config(object):
                 # comment if has a global func assigned to it
                 if is_g:
                     val = configured_global[param]
-                    sb.append(f'  {gry}# "{Instanced.get_prefix(val)}{Config.GLOBAL_NAMESPACE}.{param}{gry}": {repr(val)},{rst}')
+                    sb.append(f'  {gry}# "{Instanced.get_prefix(val)}{GLOBAL_NS_CHAR}.{param}{gry}": {repr(val)},{rst}')
                 # new line
                 sb.append('\n')
         # closing brace
         sb.append(f'{gry}}}{rst}')
         # generate string!
-        print(''.join(sb))
-
+        return ''.join(sb)
 
 # ========================================================================= #
 # Instanced Value                                                           #
@@ -456,6 +436,12 @@ class Instanced(object):
     def __init__(self, configurable: Configurable):
         self.configurable = configurable
 
+    def __str__(self):
+        return self.configurable.cid
+
+    def __repr__(self):
+        return repr(self.configurable.cid)
+
     @staticmethod
     def try_instantiate(value):
         if isinstance(value, Instanced):
@@ -470,7 +456,7 @@ class Instanced(object):
         """
         # no checks needed because we validated on updating/setting the config
         if isinstance(value, Instanced):
-            return f'{Config.INSTANCED_CHAR}{key}', value.configurable.nid
+            return f'{INSTANCED_CHAR}{key}', value.configurable.nid
         return key, value
 
     @staticmethod
@@ -479,13 +465,13 @@ class Instanced(object):
         Convert a @path & value to a path & Instance(registered_func) if possible.
         Used when loading/setting the config
         """
-        if key.startswith(Config.INSTANCED_CHAR):
+        if key.startswith(INSTANCED_CHAR):
             if isinstance(value, str):
                 cid = value
                 if cid not in configurables:
                     raise KeyError(f'Could not find a registered configurable matching the cid marked as instanced "{key}": "{cid}"')
             elif Configurable.can_configure(value):
-                cid = Configurable.nid_from_func(value)
+                cid = Configurable.id_from_func(value)
                 if cid not in configurables:
                     raise KeyError(f'function marked as Instanced has not been registered as a configurable "{key}": "{cid}"')
             else:
@@ -493,32 +479,10 @@ class Instanced(object):
             return key[1:], Instanced(configurables[cid])  # self._configurables[cid]
         return key, value
 
-    def _convert_if_instanced_for_load(self, path, value) -> (str, object):
-        """
-        Convert a @path & value to a path & Instance(registered_func) if possible.
-        Used when loading/setting the config
-        """
-        if path.startswith(Config.INSTANCED_CHAR):
-            if isinstance(value, str):
-                # get registered function if this is a string
-                if value not in self._CONFIGURABLES:
-                    raise KeyError(f'Not a valid register to a registered function: {value}')
-                fullname = value
-            else:
-                # check that the function is configurable
-                if not _Configurable.can_configure(value):
-                    raise ValueError(f'value marked as Instanced is not configurable "{path}": {value}')
-                # check that the function is registered
-                fullname = _Configurable.get_shortname(value) # TODO: this corresponds to register_function
-                if fullname not in self._CONFIGURABLES:
-                    raise KeyError(f'function set as Instanced has not been registered as a configurable "{path}": {fullname}')
-            return path[1:], _Instanced(self._CONFIGURABLES[fullname])
-        return path, value
-
     @staticmethod
     def get_prefix(value):
         if isinstance(value, Instanced):
-            return Config.INSTANCED_CHAR
+            return INSTANCED_CHAR
         return ''
 
 # ========================================================================= #

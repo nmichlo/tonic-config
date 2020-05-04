@@ -95,7 +95,7 @@ def test_class():
     assert WrappedCls(optimizer='radam').get()         == ('radam', 0.005)
 
 
-def test_general(capsys):
+def test_general():
         config = tonic.Config()
 
         @config
@@ -144,9 +144,7 @@ def test_general(capsys):
         assert ran1_2a is ran1_2b
         assert ran1_1a is not ran1_2a
 
-        with capsys.disabled():
-            config.save_config('test_conf.toml')
-
+        config.save_config('test_conf.toml')
         config.reset()
 
         assert test(0, 1)  == (0, 1, 2, 3, -2)
@@ -166,8 +164,7 @@ def test_general(capsys):
         assert ran2_1a is not ran1_1a
         assert ran2_2a is not ran1_2a
 
-        with capsys.disabled():
-            config.load_config('test_conf.toml')
+        config.load_config('test_conf.toml')
 
         assert test(0, 1)  == (0, 1, 55, 3, -100)
         assert test(0, 1)  == (0, 1, 55, 3, -100)
@@ -186,8 +183,7 @@ def test_general(capsys):
         assert ran3_1a is not ran2_1a
         assert ran3_2a is not ran2_2a
 
-        with capsys.disabled():
-            config.print()
+        assert config.to_pretty_string() == '\x1b[90m{\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest.test\x1b[90m.\x1b[94mc\x1b[90m"\x1b[0m: \x1b[93m77\x1b[90m,\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest.test\x1b[90m.\x1b[94md\x1b[90m"\x1b[0m: \x1b[93m100\x1b[90m,\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest.test\x1b[90m.\x1b[94me\x1b[90m"\x1b[0m: \x1b[93m100\x1b[90m,\x1b[0m  \x1b[90m# "*.e\x1b[90m": -100,\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest.test\x1b[90m.\x1b[94mseed\x1b[90m"\x1b[0m: \x1b[91m100\x1b[90m,\x1b[0m  \x1b[90m# "*.seed\x1b[90m": 100,\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest_general.test\x1b[90m.\x1b[94mc\x1b[90m"\x1b[0m: \x1b[93m55\x1b[90m,\x1b[0m\n\x1b[90m# \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest_general.test\x1b[90m.\x1b[94md\x1b[90m"\x1b[0m: \x1b[90m,\x1b[0m\n  \x1b[90m"\x1b[92m\x1b[0m\x1b[95mtest_general.test\x1b[90m.\x1b[94me\x1b[90m"\x1b[0m: \x1b[91m-100\x1b[90m,\x1b[0m  \x1b[90m# "*.e\x1b[90m": -100,\x1b[0m\n  \x1b[90m"\x1b[92m@\x1b[0m\x1b[95mtest_general.testran1\x1b[90m.\x1b[94mrandom\x1b[90m"\x1b[0m: \x1b[91m\'test_general.random\'\x1b[90m,\x1b[0m  \x1b[90m# "@*.random\x1b[90m": \'test_general.random\',\x1b[0m\n  \x1b[90m"\x1b[92m@\x1b[0m\x1b[95mtest_general.testran2\x1b[90m.\x1b[94mrandom\x1b[90m"\x1b[0m: \x1b[91m\'test_general.random\'\x1b[90m,\x1b[0m  \x1b[90m# "@*.random\x1b[90m": \'test_general.random\',\x1b[0m\n\x1b[90m}\x1b[0m'
 
 def test_readme_get_started():
     @tonic.config
