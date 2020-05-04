@@ -332,8 +332,7 @@ class Config(object):
 class _Instanced(object):
     def __init__(self, func):
         if not callable(func):
-            print(f'[\033[91m{func}\033[0m]')
-            func = globals()[func]
+            raise RuntimeError('This should never happen! Please submit a bug report!')
         self.func = func
 
     def __call__(self):
