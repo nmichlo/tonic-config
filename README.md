@@ -66,7 +66,7 @@ def foobar2(foo=2, bar=None):
     print(foo, bar)
 
 tonic.config.set({
-    'fizz.buzz.bar': 'bar' 
+    'fizz.buzz.bar': 'bar'
 })
 
 foobar1()
@@ -126,12 +126,11 @@ The above will output:
 ```
 >>> foo bar global
 >>> fizz bang global
-
 >>> foo bar global
 >>> fizz bang overwritten
 ```
 
-### Instanced Values
+### 4. Instanced Values
 
 prefixing any key in the configuration with an `@` marks the
 corresponding value as an instanced value.
@@ -185,12 +184,10 @@ The above will output the following:
 ```
 >>> None
 >>> None
-
 >>> 2
 >>> 2
-
->>> 5
->>> 5
+>>> 7
+>>> 7
 ```
 
 

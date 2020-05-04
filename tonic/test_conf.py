@@ -93,7 +93,7 @@ def test_class():
     assert WrappedCls(optimizer='radam').get()         == ('radam', 0.005)
 
 
-def test_general():
+def test_general(capsys):
         config = tonic.Config()
 
         @config
@@ -142,7 +142,9 @@ def test_general():
         assert ran1_2a is ran1_2b
         assert ran1_1a is not ran1_2a
 
-        config.save_config('test_conf.toml')
+        with capsys.disabled():
+            config.save_config('test_conf.toml')
+
         config.reset()
 
         assert test(0, 1)  == (0, 1, 2, 3, -2)
@@ -162,14 +164,8 @@ def test_general():
         assert ran2_1a is not ran1_1a
         assert ran2_2a is not ran1_2a
 
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        print(config._CONFIGURABLES)
-        config.load_config('test_conf.toml')
+        with capsys.disabled():
+            config.load_config('test_conf.toml')
 
         assert test(0, 1)  == (0, 1, 55, 3, -100)
         assert test(0, 1)  == (0, 1, 55, 3, -100)
@@ -188,7 +184,8 @@ def test_general():
         assert ran3_1a is not ran2_1a
         assert ran3_2a is not ran2_2a
 
-        config.print()
+        with capsys.disabled():
+            config.print()
 
 def test_readme_get_started():
     import tonic
@@ -277,7 +274,6 @@ def test_readme_instanced():
     def print_count(count=None):
         return count
 
-    print("PORTION NONE")
     assert print_count() == None
     assert print_count() == None
 
@@ -286,7 +282,6 @@ def test_readme_instanced():
         '@test_readme_instanced.print_count.count': 'test_readme_instanced.counter'
     })
 
-    print("PORTION 1")
     assert print_count() == 2
     assert print_count() == 2
 
@@ -294,9 +289,22 @@ def test_readme_instanced():
         'test_readme_instanced.counter.step_size': 3,
     })
 
-    print("PORTION 3")
     assert print_count() == 5
     assert print_count() == 5
+
+
+def test_examples():
+    import subprocess
+    import sys
+
+    example_01 = subprocess.getoutput(f'{sys.executable} examples/01_get_started.py')
+    assert example_01 == '1000 None\n1000 1337\n1000 bar'
+    example_02 = subprocess.getoutput(f'{sys.executable} examples/02_namespaces.py')
+    assert example_02 == '1 bar\n2 bar'
+    example_03 = subprocess.getoutput(f'{sys.executable} examples/03_global.py')
+    assert example_03 == 'foo bar global\nfizz bang global\nfoo bar global\nfizz bang overwritten'
+    example_04 = subprocess.getoutput(f'{sys.executable} examples/04_instanced_values.py')
+    assert example_04 == 'None\nNone\n2\n2\n7\n7'
 
 
 # ========================================================================= #
