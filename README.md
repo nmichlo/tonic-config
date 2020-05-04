@@ -158,6 +158,7 @@ def counter(step_size=1):
     COUNT += step_size
     return COUNT
 
+@tonic.config
 def print_count(count=None):
     print(count)
 
@@ -166,14 +167,14 @@ print_count()
 
 tonic.config.set({
     'counter.step_size': 2,
-    '@printer.count': 'counter'
+    '@print_count.count': 'counter'
 })
 
 print_count()
 print_count()
 
 tonic.config.update({
-    'counter.step_size': 3,
+    'counter.step_size': 5,
 })
 
 print_count()
@@ -182,14 +183,14 @@ print_count()
 
 The above will output the following:
 ```
->>> 1
->>> 1
+>>> None
+>>> None
 
->>> 3
->>> 3
+>>> 2
+>>> 2
 
->>> 6
->>> 6
+>>> 5
+>>> 5
 ```
 
 

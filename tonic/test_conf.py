@@ -162,6 +162,13 @@ def test_general():
         assert ran2_1a is not ran1_1a
         assert ran2_2a is not ran1_2a
 
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
+        print(config._CONFIGURABLES)
         config.load_config('test_conf.toml')
 
         assert test(0, 1)  == (0, 1, 55, 3, -100)
@@ -181,10 +188,115 @@ def test_general():
         assert ran3_1a is not ran2_1a
         assert ran3_2a is not ran2_2a
 
-
-
         config.print()
 
+def test_readme_get_started():
+    import tonic
+
+    @tonic.config
+    def foobar(foo, bar=None):
+        return (foo, bar)
+
+    # no configuration used for call
+    assert foobar(1000) == (1000, None)
+
+    # set configuration and reconfigure registered functions
+    # tonic.config.reset() resets configuration
+    # tonic.config.update() merges the given configuration with the previous, overwriting values.
+    tonic.config.set({
+        'test_readme_get_started.foobar.bar': 1337
+    })
+
+    # call functions with new configuration
+    assert foobar(1000) == (1000, 1337)
+    assert foobar(1000, bar='bar') == (1000, 'bar')
+
+def test_readme_namespaces():
+    import tonic
+
+    @tonic.config('fizz.buzz')
+    def foobar1(foo=1, bar=None):
+        return (foo, bar)
+
+    @tonic.config('fizz.buzz')
+    def foobar2(foo=2, bar=None):
+        return (foo, bar)
+
+    tonic.config.set({
+        'fizz.buzz.bar': 'bar'
+    })
+
+    assert foobar1() == (1, 'bar')
+    assert foobar2() == (2, 'bar')
+
+def test_readme_global():
+    import tonic
+
+    @tonic.config
+    def foobar(foo=None, bar=None, buzz=None):
+        return (foo, bar, buzz)
+
+    @tonic.config
+    def fizzbang(fizz=None, bang=None, buzz=None):
+        return (fizz, bang, buzz)
+
+    tonic.config.set({
+        '*.buzz': 'global',
+        # configure foobar
+        'test_readme_global.foobar.foo': 'foo',
+        'test_readme_global.foobar.bar': 'bar',
+        # configure fizzbang
+        'test_readme_global.fizzbang.fizz': 'fizz',
+        'test_readme_global.fizzbang.bang': 'bang',
+    })
+
+    assert foobar() == ('foo', 'bar', 'global')
+    assert fizzbang() == ('fizz', 'bang', 'global')
+
+    # merge the given config with the previous
+    # reset config instead with tonic.config.reset()
+    tonic.config.update({
+        'test_readme_global.fizzbang.buzz': 'overwritten'
+    })
+
+    assert foobar() == ('foo', 'bar', 'global')
+    assert fizzbang() == ('fizz', 'bang', 'overwritten')
+
+
+def test_readme_instanced():
+    import tonic
+    COUNT = 0
+
+    @tonic.config
+    def counter(step_size=1):
+        nonlocal COUNT
+        COUNT += step_size
+        return COUNT
+
+    @tonic.config
+    def print_count(count=None):
+        return count
+
+    print("PORTION NONE")
+    assert print_count() == None
+    assert print_count() == None
+
+    tonic.config.set({
+        'test_readme_instanced.counter.step_size': 2,
+        '@test_readme_instanced.print_count.count': 'test_readme_instanced.counter'
+    })
+
+    print("PORTION 1")
+    assert print_count() == 2
+    assert print_count() == 2
+
+    tonic.config.update({
+        'test_readme_instanced.counter.step_size': 3,
+    })
+
+    print("PORTION 3")
+    assert print_count() == 5
+    assert print_count() == 5
 
 
 # ========================================================================= #

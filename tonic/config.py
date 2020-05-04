@@ -27,21 +27,24 @@ class _Configurable(object):
         if not callable(func):
             raise ValueError(f'_Configurable must be callable: {func}')
         # the function which should be configured
-        self.func: callable = func
+        self._func: callable = func
         # the namespace which shares parameter values
         self.namespace: str = self.shortname if (namespace is None) else self.validate_name(namespace)
         # if the function needs to be remade
-        self._dirty = True
+        self._is_dirty = True
+        # temp configurations, only set when dirty
+        self._last_ns_config = None
+        self._last_global_config = None
 
     @functools.cached_property
     def fullname(self) -> str:
         """See _Configurable.get_fullname(...)"""
-        return _Configurable.get_fullname(self.func)
+        return _Configurable.get_fullname(self._func)
 
     @functools.cached_property
     def shortname(self) -> str:
         """See _Configurable.get_fullname(...)"""
-        return _Configurable.get_shortname(self.func)
+        return _Configurable.get_shortname(self._func)
 
     @functools.cached_property
     def configurable_param_names(self) -> Set[str]:
@@ -49,10 +52,13 @@ class _Configurable(object):
         Get all configurable parameters of the function.
         ie. return all the parameters with default values.
         """
-        params = inspect.signature(self.func).parameters
+        params = inspect.signature(self._func).parameters
         return {k for k, p in params.items() if (p.default is not p.empty)}
 
-    def make_wrapped_func(self, ns_config, global_config):
+    def __call__(self, *args, **kwargs):
+        return self.decorated_func(*args, **kwargs)
+
+    def _make_defaults_func(self, ns_config, global_config):
         """
         Create a wrapped function for the configurable based on the default
         values given from the namespace (takes priority) and global namespace (lower priority)
@@ -61,10 +67,8 @@ class _Configurable(object):
 
         :return: the wrapped/configured function
         """
-
-        assert self.is_dirty, 'Cannot make function if not dirty'
-        self._is_dirty = False
-
+        if (self._last_ns_config is None) or (self._last_global_config is None):
+            raise RuntimeError('Reconfigure not called before trying to call configurable.')
         # get kwargs
         kwargs = {}
         for k in self.configurable_param_names:
@@ -72,22 +76,33 @@ class _Configurable(object):
                 kwargs[k] = ns_config[k]
             elif k in global_config:
                 kwargs[k] = global_config[k]
-
         # reinstantiate if _Instanced
         for k, v in kwargs.items():
             if isinstance(v, _Instanced):
                 kwargs[k] = v()
+        # make new function
+        return functools.partial(self._func, **kwargs)
 
-        # make new function with default values
-        return functools.partial(self.func, **kwargs)
+    def reconfigure(self, ns_config, global_config):
+        self._last_ns_config = ns_config
+        self._last_global_config = global_config
+        self._is_dirty = True
 
-    @property
-    def is_dirty(self) -> bool:
-        """
-        If the configurable is dirty and its
-        configured function should be recreated.
-        """
-        return self._is_dirty
+    @functools.cached_property
+    def decorated_func(self):
+        defaults_func = None # we dont expose this
+        @functools.wraps(self._func)  # copy name, docs, etc.
+        def remake_if_dirty(*args, **kwargs):
+            nonlocal defaults_func
+            if self._is_dirty:
+                defaults_func = self._make_defaults_func(self._last_ns_config, self._last_global_config)
+                # mark as non-dirty
+                self._is_dirty = False
+                self._last_ns_config = None
+                self._last_global_config = None
+            # call our configured function!
+            return defaults_func(*args, **kwargs)
+        return remake_if_dirty
 
     def __str__(self):
         return self.fullname
@@ -196,9 +211,9 @@ class Config(object):
         configurable = _Configurable(func, namespace)
 
         # check that we have not already registered the configurable
-        register = configurable.fullname if (register is None) else _Configurable.validate_name(register)
+        register = configurable.shortname if (register is None) else _Configurable.validate_name(register)
         if register in self._CONFIGURABLES:
-            raise KeyError(f'configurable already registered: {register}')
+            raise KeyError(f'configurable already registered: {register} try specifying register="<unique_path>"')
         self._CONFIGURABLES[register] = configurable
 
         # check that we have not registered the namespace
@@ -207,18 +222,27 @@ class Config(object):
                 raise KeyError(f'strict mode enabled, namespaces must be unique: {namespace}')
         self._NAMESPACE_PARAMS.setdefault(configurable.namespace, set()).update(configurable.configurable_param_names)
 
+        # reconfigure configurable
+        # TODO: this might be called to early and update the configurable with values
+        #  that are not expected due to later additions?
+        configurable.reconfigure(
+            self._NAMESPACE_CONFIGS.get(configurable.namespace, {}),
+            self._NAMESPACE_CONFIGS.get(Config.GLOBAL_NAMESPACE, {})
+        )
+
         # return the new configurable
         return configurable
 
-    def _mark_all_dirty(self) -> None:
+    def _reconfigure_all(self) -> None:
         """
         Mark all configurables as dirty.
         Used internally by set() and update().
         TODO: This is not the most efficient implementation, changes are not detected.
         """
-        # TODO: detect changes?
+        global_config = self._NAMESPACE_CONFIGS.get(Config.GLOBAL_NAMESPACE, {})
         for path, configurable in self._CONFIGURABLES.items():
-            configurable._is_dirty = True
+            ns_config = self._NAMESPACE_CONFIGS.get(configurable.namespace, {})
+            configurable.reconfigure(ns_config, global_config)
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Decorators                                                            #
@@ -244,19 +268,7 @@ class Config(object):
         """
         def decorate(func):
             configurable = self._register_function(func, namespace_str, register)
-            wrapped_func = None
-
-            @functools.wraps(func)  # copy name, docs, etc.
-            def caller(*args, **kwargs):
-                nonlocal wrapped_func
-                if configurable.is_dirty:
-                    ns_config = self._NAMESPACE_CONFIGS.get(configurable.namespace, {})
-                    global_config = self._NAMESPACE_CONFIGS.get(Config.GLOBAL_NAMESPACE, {})
-                    wrapped_func = configurable.make_wrapped_func(ns_config, global_config)
-                    # TODO: log to debug logger
-                    # print(f'[debug]: remade {configurable}')
-                return wrapped_func(*args, **kwargs)
-            return caller
+            return configurable.decorated_func
 
         # support call without arguments
         if _Configurable.can_configure(namespace):
@@ -291,7 +303,7 @@ class Config(object):
         :param flat_config: a flat config
         """
         self._NAMESPACE_CONFIGS = self._flat_config_to_namespace_configs(flat_config)
-        self._mark_all_dirty()
+        self._reconfigure_all()
 
     def update(self, flat_config: Dict[str, object]) -> None:
         """
@@ -304,33 +316,33 @@ class Config(object):
         # merge all namespace configs
         for namespace, ns_conf in ns_config.items():
             self._NAMESPACE_CONFIGS.setdefault(namespace, {}).update(ns_conf)
-        self._mark_all_dirty()
+        self._reconfigure_all()
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # conversion                                                            #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _convert_if_instanced_for_load(self, path, func) -> (str, object):
+    def _convert_if_instanced_for_load(self, path, value) -> (str, object):
         """
         Convert a @path & value to a path & Instance(registered_func) if possible.
         Used when loading/setting the config
         """
         if path.startswith(Config.INSTANCED_CHAR):
-            if isinstance(func, str):
+            if isinstance(value, str):
                 # get registered function if this is a string
-                if not func in self._CONFIGURABLES:
-                    raise KeyError(f'Not a valid register to a registered function: {func}')
-                func = self._CONFIGURABLES[func].func
+                if value not in self._CONFIGURABLES:
+                    raise KeyError(f'Not a valid register to a registered function: {value}')
+                fullname = value
             else:
                 # check that the function is configurable
-                if not _Configurable.can_configure(func):
-                    raise ValueError(f'value marked as Instanced is not configurable "{path}": {func}')
+                if not _Configurable.can_configure(value):
+                    raise ValueError(f'value marked as Instanced is not configurable "{path}": {value}')
                 # check that the function is registered
-                fullname = _Configurable.get_fullname(func)
+                fullname = _Configurable.get_shortname(value) # TODO: this corresponds to register_function
                 if fullname not in self._CONFIGURABLES:
                     raise KeyError(f'function set as Instanced has not been registered as a configurable "{path}": {fullname}')
-            return path[1:], _Instanced(func)
-        return path, func
+            return path[1:], _Instanced(self._CONFIGURABLES[fullname])
+        return path, value
 
     def _convert_if_instanced_for_save(self, path, value) -> (str, object):
         """
@@ -340,7 +352,8 @@ class Config(object):
         if isinstance(value, _Instanced):
             # no checks needed because we validated on updating/setting the config
             path = Config.INSTANCED_CHAR + path
-            value = _Configurable.get_fullname(value.func)
+            value = value.configurable.shortname # TODO: must be in _CONFIGURABLES
+            assert value in self._CONFIGURABLES, 'This should never happen, please submit a bug report!'
         return path, value
 
     def _flat_config_to_namespace_configs(self, flat_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
@@ -471,19 +484,19 @@ class _Instanced(object):
     if marked as instanced, the <value> must be a registered configurable
     """
 
-    def __init__(self, func):
-        if not callable(func):
+    def __init__(self, configurable):
+        if not isinstance(configurable, _Configurable):
             raise RuntimeError('This should never happen! Please submit a bug report!')
-        self.func = func
+        self.configurable = configurable
 
     def __call__(self):
-        return self.func()
+        return self.configurable()
 
     def __str__(self):
         return repr(self)
 
     def __repr__(self):
-        return _Configurable.get_fullname(self.func)
+        return self.configurable.fullname
 
     @staticmethod
     def get_prefix(value):
