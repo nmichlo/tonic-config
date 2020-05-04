@@ -1,4 +1,4 @@
-from typing import Dict, Set, Type, Union
+from typing import Dict, Set
 import functools
 import os
 import keyword
@@ -11,14 +11,21 @@ import inspect
 # ========================================================================= #
 
 
-class Configurable(object):
+class _Configurable(object):
+    """
+    _Configurable manages the configurable
+    parameters of a registered function or class.
+
+    Used internally by Config.
+    """
+
     # namespace pattern
     # https://docs.python.org/3/reference/lexical_analysis.html
     _NAME_PATTERN = re.compile('^([a-zA-Z0-9_]+|[*])([.][a-zA-Z0-9_]+)*$')
 
     def __init__(self, func, namespace=None):
         if not callable(func):
-            raise ValueError(f'Configurable must be callable: {func}')
+            raise ValueError(f'_Configurable must be callable: {func}')
         # the function which should be configured
         self.func: callable = func
         # the namespace which shares parameter values
@@ -28,18 +35,33 @@ class Configurable(object):
 
     @functools.cached_property
     def fullname(self) -> str:
-        return Configurable.get_fullname(self.func)
+        """See _Configurable.get_fullname(...)"""
+        return _Configurable.get_fullname(self.func)
 
     @functools.cached_property
     def shortname(self) -> str:
-        return Configurable.get_shortname(self.func)
+        """See _Configurable.get_fullname(...)"""
+        return _Configurable.get_shortname(self.func)
 
     @functools.cached_property
     def configurable_param_names(self) -> Set[str]:
+        """
+        Get all configurable parameters of the function.
+        ie. return all the parameters with default values.
+        """
         params = inspect.signature(self.func).parameters
         return {k for k, p in params.items() if (p.default is not p.empty)}
 
     def make_wrapped_func(self, ns_config, global_config):
+        """
+        Create a wrapped function for the configurable based on the default
+        values given from the namespace (takes priority) and global namespace (lower priority)
+
+        Also instantiates any values that are marked as instanced to be used as the new default.
+
+        :return: the wrapped/configured function
+        """
+
         assert self.is_dirty, 'Cannot make function if not dirty'
         self._is_dirty = False
 
@@ -61,6 +83,10 @@ class Configurable(object):
 
     @property
     def is_dirty(self) -> bool:
+        """
+        If the configurable is dirty and its
+        configured function should be recreated.
+        """
         return self._is_dirty
 
     def __str__(self):
@@ -72,30 +98,44 @@ class Configurable(object):
         This name is not validated and could be wrong!
         Returns the import path to a function
         """
-        # path to the module that the function is in without extension
+        # register to the module that the function is in without extension
         module_path = os.path.splitext(inspect.getmodule(func).__file__)[0]
-        # strip the working directory from the path
+        # strip the working directory from the register
         working_dir = os.getcwd().rstrip('/') + '/'
         assert module_path.startswith(working_dir)
         module_path = module_path[len(working_dir):]
         # replace slashes with dots and combine
-        fullname = f'{module_path.replace("/", ".")}.{Configurable.get_shortname(func)}'
-        return Configurable.validate_name(fullname)
+        fullname = f'{module_path.replace("/", ".")}.{_Configurable.get_shortname(func)}'
+        return _Configurable.validate_name(fullname)
 
     @staticmethod
     def get_shortname(func) -> str:
+        """
+        The processed __qualname__ of the function or class.
+        """
         shortname = func.__qualname__
         shortname = shortname.replace('.<locals>', '')  # handle nested functions
-        return Configurable.validate_name(shortname)
+        return _Configurable.validate_name(shortname)
 
     @staticmethod
-    def can_configure(obj):
+    def can_configure(obj) -> bool:
+        """
+        If the specified object is configurable.
+        ie. a function or a class
+        """
         return inspect.isfunction(obj) or inspect.isclass(obj)
 
     @staticmethod
     def validate_name(name) -> str:
+        """
+        names can only contain valid python identifiers separated by dots.
+        Think python imports.
+
+        :param name: name to validate according to _Configurable._NAME_PATTERN
+        :return: return the input name exactly as is.
+        """
         # CHECK PATTERN
-        if not Configurable._NAME_PATTERN.match(name):
+        if not _Configurable._NAME_PATTERN.match(name):
             raise ValueError(f'Invalid namespace and name: {repr(name)}')
         if any(keyword.iskeyword(n) for n in name.split('.')):
             raise ValueError(f'Namespace contains a python identifier')
@@ -113,7 +153,7 @@ class Config(object):
     INSTANCED_CHAR = '@'
 
     def __init__(self, strict=False):
-        self._CONFIGURABLES:     Dict[str, Configurable]      = {}  # namespace -> configurable
+        self._CONFIGURABLES:     Dict[str, _Configurable]      = {}  # namespace -> configurable
         self._NAMESPACE_PARAMS:  Dict[str, Set[str]]          = {}  # namespace -> param_names
         self._NAMESPACE_CONFIGS: Dict[str, Dict[str, object]] = {}  # namespace -> param_names -> values
         # if namespaces must not conflict
@@ -124,23 +164,42 @@ class Config(object):
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
     def has_namespace(self, namespace) -> bool:
+        """
+        Check if a namespace exists, but also handles the case of the GLOBAL_NAMESPACE
+        which is usually not a valid registration.
+        """
         return (namespace in self._NAMESPACE_PARAMS) or (namespace == Config.GLOBAL_NAMESPACE)
 
-    def has_namespace_param(self, namespace, param_name):
+    def has_namespace_param(self, namespace, param_name) -> bool:
+        """
+        If a namespace has the specified parameter.
+        returns false if the namespace itself does not exist instead of raising a KeyError
+        """
         return self.has_namespace(namespace) and (param_name in self._NAMESPACE_PARAMS[namespace])
 
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
     # Helper                                                                #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _register_function(self, func, namespace=None) -> Configurable:
+    def _register_function(self, func, namespace=None, register=None) -> _Configurable:
+        """
+        Used internally by the Config.configurable to create a new
+        configurable from a function and perform checks.
+
+        :param func: The configurable function
+        :param namespace: The namespace to bind parameters to.
+        :param register: The name to register the function under, preferably do not use this.
+        :return: new configurable corresponding to the function
+        """
+
         """Register a function to the config engine"""
-        configurable = Configurable(func, namespace)
+        configurable = _Configurable(func, namespace)
 
         # check that we have not already registered the configurable
-        if configurable.fullname in self._CONFIGURABLES:
-            raise KeyError(f'configurable already registered: {configurable.fullname}')
-        self._CONFIGURABLES[configurable.fullname] = configurable
+        register = configurable.fullname if (register is None) else _Configurable.validate_name(register)
+        if register in self._CONFIGURABLES:
+            raise KeyError(f'configurable already registered: {register}')
+        self._CONFIGURABLES[register] = configurable
 
         # check that we have not registered the namespace
         if self._strict:
@@ -151,8 +210,12 @@ class Config(object):
         # return the new configurable
         return configurable
 
-    def _mark_all_dirty(self):
-        # mark everything as dirty
+    def _mark_all_dirty(self) -> None:
+        """
+        Mark all configurables as dirty.
+        Used internally by set() and update().
+        TODO: This is not the most efficient implementation, changes are not detected.
+        """
         # TODO: detect changes?
         for path, configurable in self._CONFIGURABLES.items():
             configurable._is_dirty = True
@@ -162,8 +225,25 @@ class Config(object):
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
     def __call__(self, namespace):
+        """
+        Decorator that registers a configurable.
+        Shorthand for Config.configurable(...)
+        """
+        return self.configure(namespace)
+
+    def configure(self, namespace, register=None):
+        """
+        Decorator that registers a configurable.
+
+        A function also needs to be registered as configurable
+        if it is to be used as a tonic instanced parameter.
+
+        :param namespace: namespace is the namespace under which parameters will be grouped for configuration
+        :param register: register is the name that the function will be registered under, preferably leave this blank.
+        :return: decorated configurable function
+        """
         def decorate(func):
-            configurable = self._register_function(func, namespace_str)
+            configurable = self._register_function(func, namespace_str, register)
             wrapped_func = None
 
             @functools.wraps(func)  # copy name, docs, etc.
@@ -179,23 +259,47 @@ class Config(object):
             return caller
 
         # support call without arguments
-        if Configurable.can_configure(namespace):
+        if _Configurable.can_configure(namespace):
             namespace_str = None  # compute default
             return decorate(namespace)
         else:
             namespace_str = namespace
             return decorate
 
-    def reset(self):
+    def reset(self) -> None:
+        """
+        Reset the configuration to defaults.
+        """
         self.set({})
 
-    def set(self, flat_config):
-        """Set the current configuration"""
+    def set(self, flat_config: Dict[str, object]) -> None:
+        """
+        Set the configuration using flat configuration schema, this also marks
+        all registered configurables as dirty, meaning their functions and instanced
+        parameters will be lazily regenerated.
+
+        The configuration scheme for the dictionary is as follows:
+           standard value: "<namespace>.<param>": <value>
+           global value: "*.<param>": <value>
+           instanced value: "@<namespace>.<param>": <registered configurable>
+
+        Instanced values are instantiated PER function, and are reinstantiated
+        every time a configurable is marked as dirty. IE. every time the config
+        is set or updated.
+        - eg. this is useful for passing around random instances for example.
+
+        :param flat_config: a flat config
+        """
         self._NAMESPACE_CONFIGS = self._flat_config_to_namespace_configs(flat_config)
         self._mark_all_dirty()
 
-    def update(self, flat_config):
-        """Update the current configuration, overriding values"""
+    def update(self, flat_config: Dict[str, object]) -> None:
+        """
+        Functionally the same as set, but instead merges the configuration
+        with the existing one, overwriting any values.
+
+        see: set()
+        """
         ns_config = self._flat_config_to_namespace_configs(flat_config)
         # merge all namespace configs
         for namespace, ns_conf in ns_config.items():
@@ -206,41 +310,51 @@ class Config(object):
     # conversion                                                            #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def _convert_if_instanced_for_load(self, path, func):
-        """used when loading/setting the config"""
+    def _convert_if_instanced_for_load(self, path, func) -> (str, object):
+        """
+        Convert a @path & value to a path & Instance(registered_func) if possible.
+        Used when loading/setting the config
+        """
         if path.startswith(Config.INSTANCED_CHAR):
             if isinstance(func, str):
                 # get registered function if this is a string
                 if not func in self._CONFIGURABLES:
-                    raise KeyError(f'Not a valid path to a registered function: {func}')
+                    raise KeyError(f'Not a valid register to a registered function: {func}')
                 func = self._CONFIGURABLES[func].func
             else:
                 # check that the function is configurable
-                if not Configurable.can_configure(func):
+                if not _Configurable.can_configure(func):
                     raise ValueError(f'value marked as Instanced is not configurable "{path}": {func}')
                 # check that the function is registered
-                fullname = Configurable.get_fullname(func)
+                fullname = _Configurable.get_fullname(func)
                 if fullname not in self._CONFIGURABLES:
                     raise KeyError(f'function set as Instanced has not been registered as a configurable "{path}": {fullname}')
             return path[1:], _Instanced(func)
         return path, func
 
-    def _convert_if_instanced_for_save(self, path, value):
-        """used when saving"""
+    def _convert_if_instanced_for_save(self, path, value) -> (str, object):
+        """
+        Convert a path & Instanced(registered_func) to a @path & fullname
+        Used when saving
+        """
         if isinstance(value, _Instanced):
             # no checks needed because we validated on updating/setting the config
             path = Config.INSTANCED_CHAR + path
-            value = Configurable.get_fullname(value.func)
+            value = _Configurable.get_fullname(value.func)
         return path, value
 
     def _flat_config_to_namespace_configs(self, flat_config: Dict[str, object]) -> Dict[str, Dict[str, object]]:
+        """
+        Convert a flat configuration to a dictionary of namespaces with parameters.
+        Used as the internal data structure which is easier to work with.
+        """
         namespace_configs = {}
         # Validate names and store defaults
         for path, value in flat_config.items():
             # check is instanced variable first, and convert if it is.
             path, value = self._convert_if_instanced_for_load(path, value)
             # then validate
-            Configurable.validate_name(path)
+            _Configurable.validate_name(path)
             namespace, name = path.rsplit('.', 1)
             # check everything exists
             if self._strict:
@@ -253,6 +367,10 @@ class Config(object):
         return namespace_configs
 
     def _namespace_configs_to_flat_config(self, ns_config: Dict[str, Dict[str, object]]):
+        """
+        Convert a dictionary of namespaces to parameters, back to a flat configuration.
+        Used for saving the internal state in a way the user is familiar with.
+        """
         flat_config = {}
         for namespace in sorted(ns_config):
             conf = ns_config[namespace]
@@ -267,14 +385,22 @@ class Config(object):
     # IO                                                                    #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def save_config(self, file_path):
+    def save_config(self, file_path) -> None:
+        """
+        Save the current configuration to the specified TOML file.
+        :param file_path:
+        """
         import toml
         with open(file_path, 'w') as file:
             data = self._namespace_configs_to_flat_config(self._NAMESPACE_CONFIGS)
             toml.dump(data, file)
             print(f'[SAVED CONFIG]: {os.path.abspath(file_path)}')
 
-    def load_config(self, file_path):
+    def load_config(self, file_path) -> None:
+        """
+        Read and set() the configuration from the specified TOML file.
+        :param file_path:
+        """
         import toml
         with open(file_path, 'r') as file:
             data = toml.load(file)
@@ -285,7 +411,7 @@ class Config(object):
     # Utility                                                               #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def print(self):
+    def print(self) -> None:
         """
         Print out all the configurable parameters along with their namespace as well as their
         values if the values are specified in the current configuration.
@@ -329,7 +455,22 @@ class Config(object):
         # generate string!
         print(''.join(sb))
 
+
+# ========================================================================= #
+# Instanced Value                                                           #
+# ========================================================================= #
+
+
 class _Instanced(object):
+    """
+    See Config.set() for a description of Instanced values.
+    Handled internally, and not exposed to the user.
+
+    prefix path with @, ie.
+    @<namespace>.<name> marks the corresponding value as instanced.
+    if marked as instanced, the <value> must be a registered configurable
+    """
+
     def __init__(self, func):
         if not callable(func):
             raise RuntimeError('This should never happen! Please submit a bug report!')
@@ -342,7 +483,7 @@ class _Instanced(object):
         return repr(self)
 
     def __repr__(self):
-        return Configurable.get_fullname(self.func)
+        return _Configurable.get_fullname(self.func)
 
     @staticmethod
     def get_prefix(value):
