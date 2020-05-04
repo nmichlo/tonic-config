@@ -5,6 +5,9 @@ import keyword
 import re
 import inspect
 
+# functools has cached_property but only for python 3.8+
+from cached_property import cached_property
+
 
 # ========================================================================= #
 # configurable                                                              #
@@ -36,17 +39,17 @@ class _Configurable(object):
         self._last_ns_config = None
         self._last_global_config = None
 
-    @functools.cached_property
+    @cached_property
     def fullname(self) -> str:
         """See _Configurable.get_fullname(...)"""
         return _Configurable.get_fullname(self._func)
 
-    @functools.cached_property
+    @cached_property
     def shortname(self) -> str:
         """See _Configurable.get_fullname(...)"""
         return _Configurable.get_shortname(self._func)
 
-    @functools.cached_property
+    @cached_property
     def configurable_param_names(self) -> Set[str]:
         """
         Get all configurable parameters of the function.
@@ -88,7 +91,7 @@ class _Configurable(object):
         self._last_global_config = global_config
         self._is_dirty = True
 
-    @functools.cached_property
+    @cached_property
     def decorated_func(self):
         defaults_func = None # we dont expose this
         @functools.wraps(self._func)  # copy name, docs, etc.
