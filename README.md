@@ -48,7 +48,43 @@ Notice in the above example even if a function has been configured, manually
 specifing the named values when calling the function takes priority.
 
 
-### 2. Namespaces
+### 2. Configuring Classes
+
+If a class is annotated, the configuration will apply to parameters of the __init__ method.
+
+Other methods within the class also need to be annotated separately.
+
+```python
+import tonic
+
+@tonic.config
+class Fizz(object):
+    def __init__(self, foo=None):
+        print(foo)
+    
+    @tonic.config
+    def buzz(bar=None):
+        print(bar)
+
+Fizz().buzz()
+
+tonic.config.set({
+    'Fizz.foo': 1,
+    'Fizz.buzz.bar': 100,
+})
+
+Fizz().buzz()
+```
+
+The output of the above will be:
+```
+>>> None
+>>> None
+>>> 1
+>>> 100
+```
+
+### 3. Namespaces
 
 Tonic groups parameters of registered functions under their
 own namespace by default, corresponding to the hierarchy of
@@ -87,7 +123,7 @@ Outputs:
 ```
 
 
-### 3. Global Configurations
+### 4. Global Configurations
 
 Tonic also supports global parameter configurations by using the `*` namespace.
 
@@ -137,7 +173,7 @@ The above will output:
 >>> fizz bang overwritten
 ```
 
-### 4. Instanced Values
+### 5. Instanced Values
 
 prefixing any key in the configuration with an `@` marks the
 corresponding value as an instanced value.
@@ -197,14 +233,14 @@ The above will output the following:
 >>> 7
 ```
 
+### 6. Saving/Loading Configurations
 
-### 5. Multiple Configurations
+Save and load your configurations using `tonic.config.save('file.toml')` and `tonic.config.load('file.toml')`
+
+
+### 7. Multiple Configurations
 
 `tonic.config` is an instance of `tonic.Config()`
 
 you can instantiate your own version for example: `my_config = tonic.Config()`
 and use `my_config` instead of `tonic.config`
-
-### 6. Saving/Loading Configurations
-
-Save and load your configurations using `tonic.config.save('file.toml')` and `tonic.config.load('file.toml')`

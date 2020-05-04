@@ -291,12 +291,14 @@ def test_readme_instanced():
 def test_examples():
     example_01 = subprocess.getoutput(f'{sys.executable} examples/01_get_started.py')
     assert example_01 == '1000 None\n1000 1337\n1000 bar'
-    example_02 = subprocess.getoutput(f'{sys.executable} examples/02_namespaces.py')
-    assert example_02 == '1 bar\n2 bar'
-    example_03 = subprocess.getoutput(f'{sys.executable} examples/03_global.py')
-    assert example_03 == 'foo bar global\nfizz bang global\nfoo bar global\nfizz bang overwritten'
-    example_04 = subprocess.getoutput(f'{sys.executable} examples/04_instanced_values.py')
-    assert example_04 == 'None\nNone\n2\n2\n7\n7'
+    example_02 = subprocess.getoutput(f'{sys.executable} examples/02_configure_classes.py')
+    assert example_02 == 'None\nNone\n1\n100'
+    example_03 = subprocess.getoutput(f'{sys.executable} examples/03_namespaces.py')
+    assert example_03 == '1 bar\n2 bar'
+    example_04 = subprocess.getoutput(f'{sys.executable} examples/04_global.py')
+    assert example_04 == 'foo bar global\nfizz bang global\nfoo bar global\nfizz bang overwritten'
+    example_05 = subprocess.getoutput(f'{sys.executable} examples/05_instanced_values.py')
+    assert example_05 == 'None\nNone\n2\n2\n7\n7'
 
 
 # ========================================================================= #
