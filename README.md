@@ -1,4 +1,5 @@
-# tonic-config ![Tests Status](https://github.com/nmichlo/tonic-config/workflows/Tests/badge.svg)
+# tonic-config ![Tests Status](https://img.shields.io/github/workflow/status/nmichlo/tonic-config/Tests?label=tests&style=flat-square) ![License](https://img.shields.io/github/license/nmichlo/tonic-config?style=flat-square) ![Version](https://img.shields.io/pypi/v/tonic-config?style=flat-square) ![Python Versions](https://img.shields.io/pypi/pyversions/tonic-config?style=flat-square)
+
 📜 Tonic is a lightweight configuration framework and experiment manager for Python, combining the most notable aspects of Gin and Sacred.
 
 ## Why?
