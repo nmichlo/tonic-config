@@ -11,6 +11,10 @@ GIT_COMMITS_SINCE_LAST_TAG = subprocess.getoutput(f'git rev-list "$(git tag --so
 # read description
 with open('README.md', 'r') as fh:
     LONG_DESCRIPTION = fh.read()
+with open('requirements.txt') as fh:
+    REQUIREMENTS = fh.readlines()
+with open('requirements_test.txt') as fh:
+    REQUIREMENTS_TEST = fh.readlines()
 
 # setup
 setuptools.setup(
@@ -40,8 +44,8 @@ setuptools.setup(
     packages=setuptools.find_packages('tonic'),
 
     # requirements
-    install_requires=['toml'],
-    tests_require=['pytest'],
+    install_requires=REQUIREMENTS,
+    tests_require=REQUIREMENTS_TEST,
     setup_requires=['better-setuptools-git-version'],
 
     # https://pypi.org/classifiers/
