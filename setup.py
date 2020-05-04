@@ -2,11 +2,7 @@
 # $ python setup.py sdist
 # $ twine upload dist/*
 
-import subprocess
 import setuptools
-
-# get git info
-GIT_COMMITS_SINCE_LAST_TAG = subprocess.getoutput(f'git rev-list "$(git tag --sort=version:refname --merged | tail -n1)..HEAD" --count')
 
 # read description
 with open('README.md', 'r') as fh:
@@ -21,14 +17,8 @@ setuptools.setup(
     name='tonic-config',
     url='https://github.com/nmichlo/tonic-config',
 
-    # automatic version [better-setuptools-git-version]
-    version_config={
-        'version_format': '{tag}.dev' + GIT_COMMITS_SINCE_LAST_TAG + '.{sha}',
-        'starting_version': '0.1.0'
-    },
-
     # explicit version
-    # version='0.0.1',
+    version='0.1.5',
 
     # Author Information
     author='Nathan Michlo',
@@ -46,7 +36,6 @@ setuptools.setup(
     # requirements
     install_requires=REQUIREMENTS,
     tests_require=REQUIREMENTS_TEST,
-    setup_requires=['better-setuptools-git-version'],
 
     # https://pypi.org/classifiers/
     classifiers=[
