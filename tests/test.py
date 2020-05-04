@@ -1,7 +1,7 @@
 import tonic
-import numpy as np
 import subprocess
 import sys
+import random as ran
 
 
 # ========================================================================= #
@@ -100,7 +100,7 @@ def test_general(capsys):
 
         @config
         def random():
-            return np.random.randint(9999999, size=99) # yes... this could still fail, but highly unlikely
+            return tuple(ran.randint(0, 999999999) for i in range(99))  # yes... this could still conflict, but highly unlikely
 
         @config
         def test(a, b, c=2, d=3, e=-2):

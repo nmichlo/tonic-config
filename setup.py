@@ -13,12 +13,11 @@ setuptools.setup(
     name='tonic-config',
     url='https://github.com/nmichlo/tonic-config',
 
-    # automatic version
+    # automatic version [better-setuptools-git-version]
     version_config={
         'version_format': '{tag}.dev' + GIT_COMMITS_SINCE_LAST_TAG + '.{sha}',
         'starting_version': '0.1.0'
     },
-    setup_requires=['better-setuptools-git-version'],
 
     # explicit version
     # version='0.0.1',
@@ -35,6 +34,11 @@ setuptools.setup(
     # Project Dependencies
     python_requires='>=3.6',
     packages=setuptools.find_packages('tonic'),
+
+    # requirements
+    install_requires=['toml'],
+    tests_require=['pytest'],
+    setup_requires=['better-setuptools-git-version'],
 
     # https://pypi.org/classifiers/
     classifiers=[
