@@ -173,7 +173,7 @@ class Configurable(object):
 
 class Namespace(object):
     def __init__(self, nid):
-        self.nid: str = nid
+        self.nid: str = validate_id(nid)
         self._param_names: Set[str] = set()
         self._configurables: Set[str] = set()
 
@@ -377,7 +377,18 @@ class Config(object):
     # Utility                                                               #
     # - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - #
 
-    def to_pretty_string(self) -> str:
+    def conf_to_pretty_string(self):
+        grn, red, ylw, gry, ppl, blu, rst = '\033[92m', '\033[91m', '\033[93m', '\033[90m', '\033[95m', '\033[94m', '\033[0m'
+        sb = [f'{gry}{{{rst}\n']
+        for namespace in sorted(self._namespace_configs):
+            ns_config = self._namespace_configs[namespace]
+            for param in sorted(ns_config):
+                value = ns_config[param]
+                sb.append(f'  {gry}"{grn}{Instanced.get_prefix(value)}{ppl}{namespace}{gry}.{blu}{param}{gry}"{rst}: {ylw}{repr(value)}{rst},\n')
+        sb.append(f'{gry}}}{rst}\n')
+        return ''.join(sb)
+
+    def all_to_pretty_string(self) -> str:
         """
         Print out all the configurable parameters along with their namespace as well as their
         values if the values are specified in the current configuration.
