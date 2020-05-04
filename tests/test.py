@@ -1,5 +1,7 @@
 import tonic
 import numpy as np
+import subprocess
+import sys
 
 
 # ========================================================================= #
@@ -188,8 +190,6 @@ def test_general(capsys):
             config.print()
 
 def test_readme_get_started():
-    import tonic
-
     @tonic.config
     def foobar(foo, bar=None):
         return (foo, bar)
@@ -209,8 +209,6 @@ def test_readme_get_started():
     assert foobar(1000, bar='bar') == (1000, 'bar')
 
 def test_readme_namespaces():
-    import tonic
-
     @tonic.config('fizz.buzz')
     def foobar1(foo=1, bar=None):
         return (foo, bar)
@@ -227,8 +225,6 @@ def test_readme_namespaces():
     assert foobar2() == (2, 'bar')
 
 def test_readme_global():
-    import tonic
-
     @tonic.config
     def foobar(foo=None, bar=None, buzz=None):
         return (foo, bar, buzz)
@@ -261,7 +257,6 @@ def test_readme_global():
 
 
 def test_readme_instanced():
-    import tonic
     COUNT = 0
 
     @tonic.config
@@ -294,9 +289,6 @@ def test_readme_instanced():
 
 
 def test_examples():
-    import subprocess
-    import sys
-
     example_01 = subprocess.getoutput(f'{sys.executable} examples/01_get_started.py')
     assert example_01 == '1000 None\n1000 1337\n1000 bar'
     example_02 = subprocess.getoutput(f'{sys.executable} examples/02_namespaces.py')

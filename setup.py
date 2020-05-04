@@ -34,7 +34,7 @@ setuptools.setup(
 
     # Project Dependencies
     python_requires='>=3.6',
-    packages=setuptools.find_packages(),
+    packages=setuptools.find_packages('tonic'),
 
     # https://pypi.org/classifiers/
     classifiers=[
