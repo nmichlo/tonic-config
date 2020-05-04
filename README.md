@@ -1,8 +1,15 @@
 # tonic-config
 📜 Tonic is a lightweight configuration framework and experiment manager for Python, combining the most notable aspects of Gin and Sacred.
 
+## Why?
+
+- Gin-config is designed around their own configuration files and syntax, and is difficult to work with programatically.
+
+- Sacred has a larger yet familiar featureset, but the configuration syntax is very different. The additional advantage of tonic-config is that it has the concept of global variables.
 
 ## Getting Started
+
+### 1. Minimal Example
 
 Configurations are handled via annotating functions.
 With tonic, only default parameters of functions can be configured.
@@ -41,7 +48,7 @@ Notice in the above example even if a function has been configured, manually
 specifing the named values when calling the function takes priority.
 
 
-### Namespaces
+### 2. Namespaces
 
 Tonic groups parameters of registered functions under their
 own namespace by default, corresponding to the hierarchy of
@@ -80,7 +87,7 @@ Outputs:
 ```
 
 
-### Global Configurations
+### 3. Global Configurations
 
 Tonic also supports global parameter configurations by using the `*` namespace.
 
@@ -191,9 +198,13 @@ The above will output the following:
 ```
 
 
-### Multiple Configurations
+### 5. Multiple Configurations
 
 `tonic.config` is an instance of `tonic.Config()`
 
 you can instantiate your own version for example: `my_config = tonic.Config()`
 and use `my_config` instead of `tonic.config`
+
+### 6. Saving/Loading Configurations
+
+Save and load your configurations using `tonic.config.save('file.toml')` and `tonic.config.load('file.toml')`
