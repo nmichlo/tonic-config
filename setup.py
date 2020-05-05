@@ -18,7 +18,7 @@ setuptools.setup(
     url='https://github.com/nmichlo/tonic-config',
 
     # explicit version
-    version='0.1.6',
+    version='0.1.7',
 
     # Author Information
     author='Nathan Michlo',
@@ -31,7 +31,7 @@ setuptools.setup(
 
     # Project Dependencies
     python_requires='>=3.6',
-    packages=setuptools.find_packages('tonic'),
+    packages=setuptools.find_packages(),
 
     # requirements
     install_requires=REQUIREMENTS,
@@ -40,7 +40,9 @@ setuptools.setup(
     # https://pypi.org/classifiers/
     classifiers=[
         'License :: OSI Approved :: MIT License',
-        'Programming Language :: Python :: 3',
+        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.7',
+        'Programming Language :: Python :: 3.8',
         'Operating System :: OS Independent',
         'Development Status :: 3 - Alpha',
         'Intended Audience :: Developers',
