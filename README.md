@@ -2,6 +2,8 @@
 
 📜 Tonic is a lightweight configuration framework and experiment manager for Python, combining the most notable aspects of Gin and Sacred.
 
+⚠️ THIS PROJECT IS NO LONGER MAINTAINED ⚠️
+
 ## Why?
 
 - Gin-config is designed around their own configuration files and syntax, and is difficult to work with programatically.
